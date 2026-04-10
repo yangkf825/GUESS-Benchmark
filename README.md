@@ -1,3 +1,5 @@
+<img width="7976" height="276" alt="graphuq_bench_logo" src="https://github.com/user-attachments/assets/841314b3-5a19-420f-9def-ddc78fc7f2d2" />
+
 # GNN-UQ-Bench
 
 > **Graph Neural Network Uncertainty Quantification Benchmark**
