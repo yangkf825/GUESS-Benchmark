@@ -1,0 +1,35 @@
+src/gnn_uq_bench/
+  metrics.py      — RQ1/RQ2/RQ3 全量指标 + CalGNN专用汇总
+  datasets.py     — 4个数据集，同时提供 sparse_adj 和 edge_index
+  models.py       — 6种模型（GCNSparse/GATS/GPN/G-ΔUQ/CaGCN/...）
+  calibration.py  — 6种校准方法（TS/HB/Iso/BBQ/MetaCal/RBS）
+
+experiments/
+  run_ungnn.py    — S-BGCN-T-K
+  run_gats.py     — GATS
+  run_gpn.py      — GPN
+  run_gduq.py     — G-ΔUQ
+  run_calgnn.py   — CalGNN (Uncal + RBS)
+  run_cagcn.py    — CaGCN（含伪标签迭代）
+  run_all.sh      — 一键运行全部6种算法
+
+plot_results.py   — 可视化（5类图表）
+pyproject.toml    — pip 安装配置
+README.md         — 完整使用文档
+
+# 安装（可选，直接 python experiments/run_xxx.py 也行）
+pip install -e .
+
+# 运行（以 Elliptic 为例）
+python experiments/run_ungnn.py --dataset elliptic --data_dir ./elliptic --runs 5
+python experiments/run_gats.py  --dataset elliptic --data_dir ./elliptic --runs 5
+python experiments/run_gpn.py   --dataset elliptic --data_dir ./elliptic --runs 5
+python experiments/run_gduq.py  --dataset elliptic --data_dir ./elliptic --runs 5
+python experiments/run_calgnn.py --dataset elliptic --data_dir ./elliptic --runs 5
+python experiments/run_cagcn.py  --dataset elliptic --data_dir ./elliptic --runs 5
+
+# 或一键运行
+bash experiments/run_all.sh elliptic ./elliptic 5
+
+# 出图
+python plot_results.py --data_dir ./results --out_dir ./figures --dataset elliptic
