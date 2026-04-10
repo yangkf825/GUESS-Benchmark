@@ -1,4 +1,5 @@
-<img width="7976" height="276" alt="graphuq_bench_logo" src="https://github.com/user-attachments/assets/841314b3-5a19-420f-9def-ddc78fc7f2d2" />
+<img width="1424" height="336" alt="image" src="https://github.com/user-attachments/assets/8b670259-327b-4ffd-ae8d-422a0d4a2fee" />
+
 
 # GNN-UQ-Bench
 
