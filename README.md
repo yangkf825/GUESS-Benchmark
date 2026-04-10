@@ -1,6 +1,4 @@
 <img width="1424" height="336" alt="image" src="https://github.com/user-attachments/assets/8b670259-327b-4ffd-ae8d-422a0d4a2fee" />
-
-
 # GNN-UQ-Bench
 
 > **Graph Neural Network Uncertainty Quantification Benchmark**
