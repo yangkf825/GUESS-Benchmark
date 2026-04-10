@@ -154,4 +154,16 @@ After each algorithm finishes, three CSV files are generated under `results/<alg
 
 ## Citation
 
-If this project is helpful to your re
+If this project is helpful to your research, please cite:
+
+```bibtex
+@article{your2025gnuqbench,
+  title   = {GNN-UQ-Bench: Uncertainty Quantification Benchmarking for Graph Neural Networks},
+  author  = {},
+  year    = {2026},
+}
+```
+
+## License
+
+Apache 2.0
