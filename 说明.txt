@@ -33,3 +33,23 @@ bash experiments/run_all.sh elliptic ./elliptic 5
 
 # 出图
 python plot_results.py --data_dir ./results --out_dir ./figures --dataset elliptic
+
+# Elliptic
+python experiments/run_ungnn.py --dataset elliptic --data_dir ./data/elliptic
+
+# Arxiv
+python experiments/run_ungnn.py --dataset arxiv --data_path ./data/arxiv/data.pkl
+
+# EERM-Cora
+python experiments/run_ungnn.py --dataset eerm --eerm_dataset cora \
+    --eerm_root ./data/eerm/Planetoid/cora
+
+# EERM-Amazon
+python experiments/run_ungnn.py --dataset eerm --eerm_dataset amazon \
+    --eerm_root ./data/eerm/Amazon/Photo
+
+# Twitch
+python experiments/run_ungnn_fb_twitch.py --dataset twitch --data_root ./data
+
+# Facebook100
+python experiments/run_ungnn_fb_twitch.py --dataset facebook --data_root ./data
