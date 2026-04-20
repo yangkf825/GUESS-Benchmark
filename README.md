@@ -239,7 +239,7 @@ Conformal prediction methods additionally output `*_cp.csv` with Coverage, Set S
 | Dataset | Train | Val | OOD Test |
 |---------|-------|-----|----------|
 | Elliptic | Steps 7–11 | Steps 12–16 | 9 groups (steps 17–48) |
-| OGB-Arxiv | ≤ 2013 | 2014–2015 | 2014–16 / 2016–18 / 2018–20 |
+| OGB-Arxiv | ≤ 2011 | 2011–2014 | 2014–16 / 2016–18 / 2018–20 |
 | EERM-Cora | env 0 | env 1 | env 2–9 |
 | EERM-Amazon | env 0 | env 1 | env 2–9 |
 | Twitch | ES, FR, PTBR, RU | DE | ENGB, TW |
