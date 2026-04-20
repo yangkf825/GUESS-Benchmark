@@ -39,6 +39,8 @@ parser.add_argument('--dropout',              type=float, default=0.2)
 parser.add_argument('--entropy_reg',          type=float, default=1e-4)
 parser.add_argument('--alpha_evidence_scale', type=str,   default='latent-new-plus-classes')
 parser.add_argument('--lr',                   type=float, default=0.001)
+parser.add_argument('--flow_lr',              type=float, default=0.001)
+parser.add_argument('--flow_wd',              type=float, default=5e-4)
 parser.add_argument('--epochs',               type=int,   default=100)
 parser.add_argument('--warmup_epochs',        type=int,   default=20)
 parser.add_argument('--patience',             type=int,   default=20)
@@ -57,7 +59,7 @@ def _train(train_data, val_data, nfeat, nclass, seed, save_path):
         nfeat, nclass, args.dim_hidden, args.dim_latent,
         args.radial_layers, args.K, args.alpha_teleport,
         args.dropout, args.alpha_evidence_scale).to(device)
-    opt = model.get_optimizer(args.lr, 5e-4)[0]   # 取第一个 opt（全参数）
+    opt = model.get_optimizer(args.lr, 5e-4, args.flow_lr, args.flow_wd)[0]
     best, bad, bs = float('inf'), 0, None
 
     for epoch in range(args.epochs):
@@ -139,14 +141,14 @@ def main():
 
         run_res = {}
         probs_id, u_id = _infer(model, id_data)
-        labels_id = id_data.y.numpy()
+        labels_id = id_data.y.cpu().numpy()
         r_id = compute_split_metrics(probs_id, u_id, labels_id, nclass)
         print(f'  ID-test ({id_dom}) | acc={r_id["acc"]:.4f} ece={r_id["ece"]:.4f}')
         run_res['ID-test'] = r_id
 
         for dom, data_ood in zip(ood_doms, ood_datas):
             probs_ood, u_ood = _infer(model, data_ood)
-            labels_ood = data_ood.y.numpy()
+            labels_ood = data_ood.y.cpu().numpy()
             r_ood = compute_split_metrics(probs_ood, u_ood, labels_ood, nclass)
             r_ood = add_cross_split_metrics(r_id, r_ood, u_id, u_ood)
             name  = f'OOD-{dom}'

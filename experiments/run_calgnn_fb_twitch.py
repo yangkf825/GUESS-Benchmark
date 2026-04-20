@@ -154,6 +154,7 @@ def main():
     val_logits_list, val_probs_list, val_labels_list, val_sm_list = [], [], [], []
 
     all_runs_pm = {m: [] for m in CAL_METHODS_OUT}
+    all_runs_pm['_combined'] = []
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
@@ -168,7 +169,7 @@ def main():
         for data in val_data:
             lg, pb, sm = _logits_probs_sm_conf(model, data)
             ov_logits_l.append(lg); ov_probs_l.append(pb)
-            ov_labels_l.append(data.y.numpy()); ov_sm_l.append(sm)
+            ov_labels_l.append(data.y.cpu().numpy()); ov_sm_l.append(sm)
         ov_logits = np.concatenate(ov_logits_l)
         ov_probs  = np.concatenate(ov_probs_l)
         ov_labels = np.concatenate(ov_labels_l)
@@ -179,7 +180,7 @@ def main():
 
         # ID-test
         id_lg, id_pb, id_sm = _logits_probs_sm_conf(model, id_data)
-        id_labels = id_data.y.numpy()
+        id_labels = id_data.y.cpu().numpy()
         id_res = _eval_all_cal(id_lg, id_pb, id_labels, nclass,
                                 ts, hb, iso, bbq, mc, T_rbs, bins_rbs, id_sm)
         for cm in CAL_METHODS_OUT:
@@ -191,7 +192,7 @@ def main():
         # OOD splits
         for dom, data_ood in zip(ood_doms, ood_datas):
             ood_lg, ood_pb, ood_sm = _logits_probs_sm_conf(model, data_ood)
-            ood_labels = data_ood.y.numpy()
+            ood_labels = data_ood.y.cpu().numpy()
             ood_res = _eval_all_cal(ood_lg, ood_pb, ood_labels, nclass,
                                      ts, hb, iso, bbq, mc, T_rbs, bins_rbs, ood_sm)
             name = f'OOD-{dom}'
@@ -202,19 +203,35 @@ def main():
                 run_per_m[cm][name] = r_ood
             print(f'  {name:12s} | Uncal ood_auroc={run_per_m["Uncal"][name]["ood_auroc"]:.4f}')
 
-        for m in CAL_METHODS_OUT:
-            all_runs_pm[m].append(run_per_m[m])
+        # 转换结构：run_per_split[split][cm] = metric_dict
+        # summarize_calgnn 期望 all_runs[i][split][cm]
+        run_per_split = {}
+        for split in ['ID-test'] + [f'OOD-{d}' for d in ood_doms]:
+            run_per_split[split] = {}
+            for m in CAL_METHODS_OUT:
+                run_per_split[split][m] = run_per_m[m].get(split, {})
+        all_runs_pm['_combined'].append(run_per_split)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    for cm in CAL_METHODS_OUT:
-        pref = os.path.join(args.save_dir, f'{args.dataset}_calgnn_{cm}')
-        summarize_calgnn(
-            all_runs_pm[cm], split_names, all_keys,
-            pref + '_results.csv',
-            f'{args.dataset.capitalize()} — CalGNN [{cm}]',
-            [cm],
-            reliability_path=pref + '_reliability.csv',
-            uncertainty_path=pref + '_uncertainty.csv')
+    # DEBUG
+    print("DEBUG: len(all_runs_pm['_combined'])=", len(all_runs_pm['_combined']))
+    if all_runs_pm['_combined']:
+        r0 = all_runs_pm['_combined'][0]
+        print("DEBUG: r0.keys()=", list(r0.keys()))
+        sname = list(r0.keys())[0]
+        print(f"DEBUG: r0['{sname}'].keys()=", list(r0[sname].keys()))
+        cm0 = list(r0[sname].keys())[0]
+        m = r0[sname][cm0]
+        print(f"DEBUG: r0['{sname}']['{cm0}'].keys()=", list(m.keys())[:5] if m else 'EMPTY')
+        print(f"DEBUG: acc=", m.get('acc'))
+    pref_base = os.path.join(args.save_dir, f'{args.dataset}_calgnn')
+    summarize_calgnn(
+        all_runs_pm['_combined'], split_names, all_keys,
+        pref_base + '_results.csv',
+        f'{args.dataset.capitalize()} — CalGNN',
+        CAL_METHODS_OUT,
+        reliability_path=pref_base + '_reliability.csv',
+        uncertainty_path=pref_base + '_uncertainty.csv')
 
 
 if __name__ == '__main__':

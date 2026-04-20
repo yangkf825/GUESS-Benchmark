@@ -130,7 +130,7 @@ def main():
 
         # ID-test
         probs_id = _infer(model, id_data)
-        labels_id = id_data.y.numpy()
+        labels_id = id_data.y.cpu().numpy()
         u_id = _entropy(probs_id)
         r_id = compute_split_metrics(probs_id, u_id, labels_id, nclass)
         print(f'  ID-test ({id_dom}) | acc={r_id["acc"]:.4f} ece={r_id["ece"]:.4f} '
@@ -140,7 +140,7 @@ def main():
         # OOD-test
         for dom, data_ood in zip(ood_doms, ood_datas):
             probs_ood = _infer(model, data_ood)
-            labels_ood = data_ood.y.numpy()
+            labels_ood = data_ood.y.cpu().numpy()
             u_ood = _entropy(probs_ood)
             r_ood = compute_split_metrics(probs_ood, u_ood, labels_ood, nclass)
             r_ood = add_cross_split_metrics(r_id, r_ood, u_id, u_ood)

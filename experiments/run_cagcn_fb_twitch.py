@@ -183,7 +183,7 @@ def main():
 
         run_res = {}
         probs_id = _infer(cagcn, id_data)
-        labels_id = id_data.y.numpy()
+        labels_id = id_data.y.cpu().numpy()
         u_id = 1. - probs_id.max(1)
         r_id = compute_split_metrics(probs_id, u_id, labels_id, nclass)
         print(f'  ID-test ({id_dom}) | acc={r_id["acc"]:.4f} ece={r_id["ece"]:.4f}')
@@ -191,7 +191,7 @@ def main():
 
         for dom, data_ood in zip(ood_doms, ood_datas):
             probs_ood = _infer(cagcn, data_ood)
-            labels_ood = data_ood.y.numpy()
+            labels_ood = data_ood.y.cpu().numpy()
             u_ood = 1. - probs_ood.max(1)
             r_ood = compute_split_metrics(probs_ood, u_ood, labels_ood, nclass)
             r_ood = add_cross_split_metrics(r_id, r_ood, u_id, u_ood)
