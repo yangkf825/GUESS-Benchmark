@@ -36,7 +36,7 @@
 | Dataset | OOD Type | Train | Val | OOD Test Splits | Metric |
 |---------|----------|-------|-----|-----------------|--------|
 | **Elliptic Bitcoin** | Temporal | Steps 7–11 | Steps 12–16 | 9 groups (Steps 17–48) | F1 |
-| **OGB-Arxiv** | Temporal | ≤2013 | 2014–2015 | 2014–16 / 2016–18 / 2018–20 | Accuracy |
+| **OGB-Arxiv** | Temporal | ≤2011 | 2011–2014 | 2014–16 / 2016–18 / 2018–20 | Accuracy |
 | **EERM-Cora** | Environmental | env 0 | env 1 | env 2–9 (8 splits) | Accuracy |
 | **EERM-Amazon-Photo** | Environmental | env 0 | env 1 | env 2–9 (8 splits) | Accuracy |
 | **Twitch-Explicit** | Cross-domain | ES, FR, PTBR, RU | DE | ENGB, TW | Accuracy |
