@@ -252,7 +252,7 @@ Conformal prediction methods additionally output `*_cp.csv` with Coverage, Set S
 If this project is helpful to your research, please cite:
 
 ```bibtex
-@article{your2026gnuqbench,
+@article{yours,
   title   = {Can We Trust GNN Uncertainty? From Evaluation to
 Decision-Making under Distribution Shifts},
   author  = {},
