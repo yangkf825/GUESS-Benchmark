@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 authors = [
-    { name = "Your Name", email = "you@example.com" }
+    { name = "XXXXX", email = "XXXXX" }
 ]
 keywords = [
     "graph neural networks", "uncertainty quantification",
@@ -44,9 +44,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage   = "https://github.com/YOUR_USERNAME/gnn-uq-bench"
-Repository = "https://github.com/YOUR_USERNAME/gnn-uq-bench"
-Issues     = "https://github.com/YOUR_USERNAME/gnn-uq-bench/issues"
+Homepage   = ""
+Repository = ""
+Issues     = ""
 
 [tool.setuptools.packages.find]
 where = ["src"]
