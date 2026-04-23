@@ -1,11 +1,10 @@
 """
-绘制共形预测对比图
 ==================
-图1：Coverage vs Efficiency (Set Size)
-图2：Coverage vs Singleton Hit Ratio
-图3：SHR vs Set Size 散点图（每个点 = 一个 alpha 值）
+fig1：Coverage vs Efficiency (Set Size)
+fig2：Coverage vs Singleton Hit Ratio
+fif3：SHR vs Set Size
 
-使用方法：
+use：
     python plot_conformal.py \
         --cfgnn_dir    ./results/cfgnn \
         --confgnn_dir  ./results/confgnn \
