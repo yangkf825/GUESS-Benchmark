@@ -1,9 +1,11 @@
 <img width="1424" height="336" alt="image" src="https://github.com/user-attachments/assets/8b670259-327b-4ffd-ae8d-422a0d4a2fee" />
 
-# GNN-UQ-Bench
+# GUESS-Bench
 
-> **Graph Neural Network Uncertainty Quantification Benchmark**
-> A comprehensive benchmark for evaluating uncertainty quantification methods on graph neural networks under distribution shift.
+> **GUESS-Bench: Benchmarking Uncertainty
+Estimation in GNNs Under Distribution Shifts**
+> A comprehensive benchmark for GNN Uncertainty EStimation under distribution Shift.
+
 
 ---
 
