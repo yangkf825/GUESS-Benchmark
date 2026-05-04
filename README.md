@@ -62,8 +62,8 @@ A comprehensive benchmark for GNN Uncertainty EStimation under distribution Shif
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/gnn-uq-bench
-cd gnn-uq-bench
+git clone https://github.com/YOUR_USERNAME/gnn-uq-bench](https://anonymous.4open.science/r/GUESS-Benchmark/
+cd GUESS-Benchmark
 pip install -e .
 ```
 
