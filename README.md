@@ -2,8 +2,7 @@
 
 # GUESS-Bench
 
-> **GUESS-Bench: Benchmarking Uncertainty
-Estimation in GNNs Under Distribution Shifts**
+> **GUESS-Bench: Benchmarking Uncertainty Estimation in GNNs Under Distribution Shifts**
 > A comprehensive benchmark for GNN Uncertainty EStimation under distribution Shift.
 
 
