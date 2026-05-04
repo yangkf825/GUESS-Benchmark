@@ -1,8 +1,5 @@
+<img width="2172" height="724" alt="image" src="https://github.com/user-attachments/assets/21976eac-32ff-4617-aa3e-bdb915c509c4" />
 
-
-<img width="1024" height="242" alt="image" src="https://github.com/user-attachments/assets/baa2bc4d-8fe1-4b2a-9046-25b754a0dba3" />
-
-<img width="1440" height="1440" alt="image" src="https://github.com/user-attachments/assets/02547b36-d317-4fa3-b558-5f5a9afc1248" />
 
 
 # GUESS-Bench
