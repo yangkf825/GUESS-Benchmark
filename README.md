@@ -23,7 +23,7 @@ A comprehensive benchmark for GNN Uncertainty EStimation under distribution Shif
 | **S-BGCN-T-K** | Bayesian | Entropy of mean prediction over $K$ stochastic passes | Hasanzadeh et al., ICML 2020 |
 | **CaGCN** | Calibration | $1-\max(p)$ after graph-conv temperature scaling | Wang et al., NeurIPS 2021 |
 | **GATS** | Calibration | $1-\max(p)$ after attention temperature scaling | Hsu et al., 2022 |
-| **RBS** (CalGNN) | Calibration | $1-\max(p)$ after reliability-based bin scaling | Liu et al., 2022 |
+| **RBS**  | Calibration | $1-\max(p)$ after reliability-based bin scaling | Liu et al., 2022 |
 > **Note:** GPN employs its own normalizing flow encoder together with APPNP propagation, and is structurally independent of GCN/GAT/GraphSAGE backbones; therefore, it does not support the --backbone argument.
 ### Conformal Prediction Methods
 
