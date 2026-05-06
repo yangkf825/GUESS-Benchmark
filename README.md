@@ -238,7 +238,7 @@ python experiments/run_cagcn.py --dataset eerm --eerm_dataset amazon \
     --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GraphSAGE
 ```
  
-### CalGNN（`run_calgnn.py`）
+### RBS（`run_calgnn.py`）
  
 ```bash
 # Elliptic
@@ -345,7 +345,7 @@ python experiments/run_cagcn_fb_twitch.py --dataset facebook --data_root ./data 
 python experiments/run_cagcn_fb_twitch.py --dataset facebook --data_root ./data --backbone GraphSAGE --runs 3
 ```
  
-### CalGNN（`run_calgnn_fb_twitch.py`）
+### RBS（`run_calgnn_fb_twitch.py`）
  
 ```bash
 python experiments/run_calgnn_fb_twitch.py --dataset twitch   --data_root ./data --runs 5
@@ -394,7 +394,7 @@ graphuq-bench/
 ├── src/
 │   └── gnn_uq_bench/
 │       ├── __init__.py
-│       ├── metrics.py              # RQ1/RQ2/RQ3 full metrics + CalGNN summary
+│       ├── metrics.py              # RQ1/RQ2/RQ3 full metrics + RBS summary
 │       ├── datasets.py             # Elliptic / OGB-Arxiv / EERM loaders
 │       ├── datasets_fb_twitch.py   # Facebook100 / Twitch loaders
 │       ├── models.py               # 6 models + GCN/GAT/SAGE backbone factory
@@ -495,7 +495,7 @@ CalGNN additionally outputs results per calibration method (file names include `
 | `--stage` | 1 | Number of self-training stages |
 | `--threshold` | 0.8 | Confidence threshold for pseudo-labeling |
  
-### CalGNN-Specific Parameters
+### RBS-Specific Parameters
 
 | Parameter | Default | Description |
 |----------|--------|-------------|
