@@ -1,11 +1,11 @@
-# Contributing to GNN-UQ-Bench
+# Contributing to GUESS-Benchmark
 
 Thank you for your interest in contributing!
 
 ## Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/gnn-uq-bench
+git clone https://anonymous.4open.science/r/GUESS-Benchmark/
 cd gnn-uq-bench
 pip install -e ".[dev]"
 pre-commit install   # optional: auto-runs ruff on commit
