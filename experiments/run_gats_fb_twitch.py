@@ -1,13 +1,13 @@
 """
 GATS — Facebook100 & Twitch（跨域 OOD）
 =========================================
+支持 --backbone GCN / GAT / GraphSAGE
 不确定性：1 - max(p)
 
 用法:
-    python experiments/run_gats_fb_twitch.py \
-        --dataset twitch --data_root ./data --runs 5
-    python experiments/run_gats_fb_twitch.py \
-        --dataset facebook --data_root ./data --runs 5
+    python experiments/run_gats_fb_twitch.py --dataset twitch --data_root ./data --runs 5
+    python experiments/run_gats_fb_twitch.py --dataset twitch --data_root ./data --backbone GAT --runs 5
+    python experiments/run_gats_fb_twitch.py --dataset twitch --data_root ./data --backbone GraphSAGE --runs 5
 """
 import sys; sys.path.insert(0, 'src')
 
@@ -17,7 +17,7 @@ import torch, torch.nn as nn, torch.nn.functional as F
 from torch.optim import Adam
 
 from gnn_uq_bench.datasets_fb_twitch import load_facebook_twitch, DOMAIN_SETTINGS
-from gnn_uq_bench.models import GCNPyG, GATModel, GATS, bfs_distance
+from gnn_uq_bench.models import build_pyg_backbone, GATS, bfs_distance
 from gnn_uq_bench.metrics import (
     compute_split_metrics, add_cross_split_metrics, build_all_keys, summarize,
 )
@@ -26,7 +26,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset',       type=str,   default='twitch',
                     choices=['facebook', 'twitch'])
 parser.add_argument('--data_root',     type=str,   default='./data')
-parser.add_argument('--model',         type=str,   default='GCN', choices=['GCN', 'GAT'])
+parser.add_argument('--backbone',      type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',          type=int,   default=5)
 parser.add_argument('--hidden',        type=int,   default=64)
 parser.add_argument('--dropout',       type=float, default=0.5)
@@ -46,13 +48,13 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
 
 
 def _get_base(nfeat, nclass):
-    if args.model == 'GCN':
-        return GCNPyG(nfeat, args.hidden, nclass, args.dropout).to(device)
-    return GATModel(nfeat, args.hidden, nclass, args.dropout).to(device)
+    return build_pyg_backbone(
+        args.backbone, nfeat, args.hidden, nclass, args.dropout).to(device)
 
 
 def _train_base(base, train_data, val_data, seed, save_path):
@@ -81,7 +83,6 @@ def _train_base(base, train_data, val_data, seed, save_path):
 
 
 def _train_gats_on_domain(base, data, tr_mask_np, seed, save_path, nclass, N):
-    """在单个域（通常是 val 域）上训练 GATS 温度层"""
     torch.manual_seed(seed)
     data = data.to(device)
     ei   = data.edge_index
@@ -130,30 +131,28 @@ def main():
     ood_datas = val_data + test_data
     split_names = ['ID-test'] + [f'OOD-{d}' for d in ood_doms]
 
-    # GATS 的 val 域用第一个 val 域（整个域作为校准图）
     val_dom_data = val_data[0]
     N_val = val_dom_data.x.size(0)
-    # 用全部节点作为 "overlap" mask（跨域无节点级别 split）
     tr_mask_np_all = np.ones(N_val, dtype=bool)
 
     all_runs = []
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  GATS Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] GATS Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
 
         base = _get_base(nfeat, nclass)
         _train_base(base, train_data, val_data, seed,
                     os.path.join(args.save_dir,
-                                 f'{args.dataset}_base_seed{seed}.pth'))
+                                 f'{args.dataset}_{BTAG}_base_seed{seed}.pth'))
 
         gats = _train_gats_on_domain(
             base, val_dom_data, tr_mask_np_all, seed,
-            os.path.join(args.save_dir, f'{args.dataset}_gats_seed{seed}.pth'),
+            os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_gats_seed{seed}.pth'),
             nclass, N_val)
 
         run_res = {}
-        probs_id = _infer(base, id_data)   # ID-test 用 base（GATS 绑定 val 域图）
+        probs_id = _infer(base, id_data)
         labels_id = id_data.y.cpu().numpy()
         u_id = 1. - probs_id.max(1)
         r_id = compute_split_metrics(probs_id, u_id, labels_id, nclass)
@@ -161,7 +160,6 @@ def main():
         run_res['ID-test'] = r_id
 
         for dom, data_ood in zip(ood_doms, ood_datas):
-            # 对 OOD 域尝试直接用 base 推理（GATS 图结构已固定在 val 域）
             probs_ood = _infer(base, data_ood)
             labels_ood = data_ood.y.cpu().numpy()
             u_ood = 1. - probs_ood.max(1)
@@ -174,9 +172,9 @@ def main():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, f'{args.dataset}_gats')
+    pref = os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_gats')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              f'{args.dataset.capitalize()} — GATS',
+              f'{args.dataset.capitalize()} — GATS [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 

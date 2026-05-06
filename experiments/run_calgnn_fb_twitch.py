@@ -1,13 +1,12 @@
 """
 CalGNN — Facebook100 & Twitch（跨域 OOD）
 ==========================================
-6种后处理校准：Uncal / TS / HB / Iso / BBQ / MetaCal / RBS
+支持 --backbone GCN / GAT / GraphSAGE
 
 用法:
-    python experiments/run_calgnn_fb_twitch.py \
-        --dataset twitch --data_root ./data --runs 5
-    python experiments/run_calgnn_fb_twitch.py \
-        --dataset facebook --data_root ./data --runs 5
+    python experiments/run_calgnn_fb_twitch.py --dataset twitch --data_root ./data --runs 5
+    python experiments/run_calgnn_fb_twitch.py --dataset twitch --data_root ./data --backbone GAT --runs 5
+    python experiments/run_calgnn_fb_twitch.py --dataset twitch --data_root ./data --backbone GraphSAGE --runs 5
 """
 import sys; sys.path.insert(0, 'src')
 
@@ -16,25 +15,25 @@ import numpy as np
 import torch, torch.nn as nn, torch.nn.functional as F
 import scipy.special
 from torch.optim import Adam
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 from torch_geometric.utils import degree
 
-from gnn_uq_bench.datasets_fb_twitch import (
-    load_facebook_twitch, DOMAIN_SETTINGS,
-)
+from gnn_uq_bench.datasets_fb_twitch import load_facebook_twitch, DOMAIN_SETTINGS
 from gnn_uq_bench.calibration import (
     TemperatureScaling, HistogramBinning, IsotonicCalib, BBQ,
     MetaCalMisCoverage, compute_sm_conf, rbs_fit, apply_rbs,
 )
 from gnn_uq_bench.metrics import (
-    compute_split_metrics, add_cross_split_metrics, build_all_keys,
-    summarize_calgnn,
+    compute_split_metrics, add_cross_split_metrics, build_all_keys, summarize_calgnn,
 )
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset',      type=str,   default='twitch',
                     choices=['facebook', 'twitch'])
 parser.add_argument('--data_root',    type=str,   default='./data')
+parser.add_argument('--backbone',     type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',         type=int,   default=5)
 parser.add_argument('--hidden',       type=int,   default=8)
 parser.add_argument('--dropout',      type=float, default=0.3)
@@ -49,14 +48,14 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
 
-CAL_METHODS     = ['Uncal', 'TS', 'HB', 'Iso', 'BBQ', 'MetaCal', 'RBS']
 CAL_METHODS_OUT = ['Uncal', 'RBS']
 
 
+# ── 三种 backbone 模型（三层 + BN）──────────────────────────────
 class GCNModel(nn.Module):
-    """三层 GCN + BN（与同事 CalGNN 代码一致）"""
     def __init__(self, nfeat, nhid, nclass, dp):
         super().__init__()
         self.c1  = GCNConv(nfeat, nhid); self.bn1 = nn.BatchNorm1d(nhid)
@@ -69,9 +68,49 @@ class GCNModel(nn.Module):
         return self.c3(x, ei)
 
 
+class GATModel(nn.Module):
+    def __init__(self, nfeat, nhid, nclass, dp, heads=4):
+        super().__init__()
+        self.c1  = GATConv(nfeat, nhid, heads=heads, dropout=dp, concat=True)
+        self.bn1 = nn.BatchNorm1d(nhid * heads)
+        self.c2  = GATConv(nhid * heads, nhid, heads=1, dropout=dp, concat=False)
+        self.bn2 = nn.BatchNorm1d(nhid)
+        self.c3  = GATConv(nhid, nclass, heads=1, dropout=dp, concat=False)
+        self.dp  = dp
+
+    def forward(self, x, ei):
+        x = F.dropout(x, self.dp, self.training)
+        x = F.dropout(F.elu(self.bn1(self.c1(x, ei))), self.dp, self.training)
+        x = F.dropout(F.elu(self.bn2(self.c2(x, ei))), self.dp, self.training)
+        return self.c3(x, ei)
+
+
+class SAGEModel(nn.Module):
+    def __init__(self, nfeat, nhid, nclass, dp):
+        super().__init__()
+        self.c1  = SAGEConv(nfeat, nhid); self.bn1 = nn.BatchNorm1d(nhid)
+        self.c2  = SAGEConv(nhid,  nhid); self.bn2 = nn.BatchNorm1d(nhid)
+        self.c3  = SAGEConv(nhid,  nclass); self.dp = dp
+
+    def forward(self, x, ei):
+        x = F.dropout(F.relu(self.bn1(self.c1(x, ei))), self.dp, self.training)
+        x = F.dropout(F.relu(self.bn2(self.c2(x, ei)) + x), self.dp, self.training)
+        return self.c3(x, ei)
+
+
+def _make_model(nfeat, nclass):
+    bb = args.backbone.upper()
+    if bb == 'GCN':
+        return GCNModel(nfeat, args.hidden, nclass, args.dropout).to(device)
+    elif bb == 'GAT':
+        return GATModel(nfeat, args.hidden, nclass, args.dropout).to(device)
+    else:
+        return SAGEModel(nfeat, args.hidden, nclass, args.dropout).to(device)
+
+
 def _train(train_data, val_data, nfeat, nclass, seed, save_path):
     torch.manual_seed(seed)
-    model = GCNModel(nfeat, args.hidden, nclass, args.dropout).to(device)
+    model = _make_model(nfeat, nclass)
     opt   = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best, bad, bs = 1e9, 0, None
     for epoch in range(args.epochs):
@@ -97,19 +136,15 @@ def _train(train_data, val_data, nfeat, nclass, seed, save_path):
 
 @torch.no_grad()
 def _logits_probs_sm_conf(model, data):
-    """返回 (logits_np, probs_np, sm_conf_np) 全部 numpy"""
     model.eval(); data = data.to(device)
     logits_t = model(data.x, data.edge_index)
     probs_t  = F.softmax(logits_t, dim=1)
-    # smoothed confidence via neighbourhood average
     N   = data.x.size(0)
-    ei  = data.edge_index
-    sm  = compute_sm_conf(ei, N, probs_t, device)
+    sm  = compute_sm_conf(data.edge_index, N, probs_t, device)
     return logits_t.cpu().numpy(), probs_t.cpu().numpy(), sm
 
 
-def _fit_calibrators(ov_logits, ov_probs, ov_labels,
-                     ov_sm, ov_ei, N_ov):
+def _fit_calibrators(ov_logits, ov_probs, ov_labels, ov_sm, ov_ei, N_ov):
     ts  = TemperatureScaling().fit(ov_logits, ov_labels)
     hb  = HistogramBinning().fit(ov_probs,  ov_labels)
     iso = IsotonicCalib().fit(ov_probs,     ov_labels)
@@ -150,21 +185,16 @@ def main():
     ood_datas = val_data + test_data
     split_names = ['ID-test'] + [f'OOD-{d}' for d in ood_doms]
 
-    # 合并所有 val 域做校准
-    val_logits_list, val_probs_list, val_labels_list, val_sm_list = [], [], [], []
-
-    all_runs_pm = {m: [] for m in CAL_METHODS_OUT}
-    all_runs_pm['_combined'] = []
+    all_runs_pm = {'_combined': []}
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CalGNN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] CalGNN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
 
         model = _train(
             train_data, val_data, nfeat, nclass, seed,
-            os.path.join(args.save_dir, f'{args.dataset}_seed{seed}.pth'))
+            os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_seed{seed}.pth'))
 
-        # 收集 val 域数据用于拟合校准器
         ov_logits_l, ov_probs_l, ov_labels_l, ov_sm_l = [], [], [], []
         for data in val_data:
             lg, pb, sm = _logits_probs_sm_conf(model, data)
@@ -178,18 +208,15 @@ def main():
         ts, hb, iso, bbq, mc, T_rbs, bins_rbs = _fit_calibrators(
             ov_logits, ov_probs, ov_labels, ov_sm, None, None)
 
-        # ID-test
         id_lg, id_pb, id_sm = _logits_probs_sm_conf(model, id_data)
         id_labels = id_data.y.cpu().numpy()
         id_res = _eval_all_cal(id_lg, id_pb, id_labels, nclass,
                                 ts, hb, iso, bbq, mc, T_rbs, bins_rbs, id_sm)
         for cm in CAL_METHODS_OUT:
-            print(f'  ID-test [{cm}] acc={id_res[cm]["acc"]:.4f} '
-                  f'ece={id_res[cm]["ece"]:.4f}')
+            print(f'  ID-test [{cm}] acc={id_res[cm]["acc"]:.4f} ece={id_res[cm]["ece"]:.4f}')
 
         run_per_m = {m: {'ID-test': id_res[m]} for m in CAL_METHODS_OUT}
 
-        # OOD splits
         for dom, data_ood in zip(ood_doms, ood_datas):
             ood_lg, ood_pb, ood_sm = _logits_probs_sm_conf(model, data_ood)
             ood_labels = data_ood.y.cpu().numpy()
@@ -203,8 +230,6 @@ def main():
                 run_per_m[cm][name] = r_ood
             print(f'  {name:12s} | Uncal ood_auroc={run_per_m["Uncal"][name]["ood_auroc"]:.4f}')
 
-        # 转换结构：run_per_split[split][cm] = metric_dict
-        # summarize_calgnn 期望 all_runs[i][split][cm]
         run_per_split = {}
         for split in ['ID-test'] + [f'OOD-{d}' for d in ood_doms]:
             run_per_split[split] = {}
@@ -213,22 +238,12 @@ def main():
         all_runs_pm['_combined'].append(run_per_split)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    # DEBUG
-    print("DEBUG: len(all_runs_pm['_combined'])=", len(all_runs_pm['_combined']))
-    if all_runs_pm['_combined']:
-        r0 = all_runs_pm['_combined'][0]
-        print("DEBUG: r0.keys()=", list(r0.keys()))
-        sname = list(r0.keys())[0]
-        print(f"DEBUG: r0['{sname}'].keys()=", list(r0[sname].keys()))
-        cm0 = list(r0[sname].keys())[0]
-        m = r0[sname][cm0]
-        print(f"DEBUG: r0['{sname}']['{cm0}'].keys()=", list(m.keys())[:5] if m else 'EMPTY')
-        print(f"DEBUG: acc=", m.get('acc'))
-    pref_base = os.path.join(args.save_dir, f'{args.dataset}_calgnn')
+    pref_base = os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_calgnn')
+    from gnn_uq_bench.metrics import summarize_calgnn
     summarize_calgnn(
         all_runs_pm['_combined'], split_names, all_keys,
         pref_base + '_results.csv',
-        f'{args.dataset.capitalize()} — CalGNN',
+        f'{args.dataset.capitalize()} — CalGNN [{args.backbone}]',
         CAL_METHODS_OUT,
         reliability_path=pref_base + '_reliability.csv',
         uncertainty_path=pref_base + '_uncertainty.csv')

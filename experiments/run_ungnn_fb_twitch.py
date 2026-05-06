@@ -1,13 +1,13 @@
 """
 S-BGCN-T-K — Facebook100 & Twitch（跨域 OOD）
 ================================================
+支持 --backbone GCN / GAT / GraphSAGE
 不确定性：预测熵 H[p]
 
 用法:
-    python experiments/run_ungnn_fb_twitch.py \
-        --dataset twitch --data_root ./data --runs 5
-    python experiments/run_ungnn_fb_twitch.py \
-        --dataset facebook --data_root ./data --runs 5
+    python experiments/run_ungnn_fb_twitch.py --dataset twitch --data_root ./data --runs 5
+    python experiments/run_ungnn_fb_twitch.py --dataset twitch --data_root ./data --backbone GAT --runs 5
+    python experiments/run_ungnn_fb_twitch.py --dataset twitch --data_root ./data --backbone GraphSAGE --runs 5
 """
 import sys; sys.path.insert(0, 'src')
 
@@ -15,7 +15,7 @@ import os, time, argparse, copy
 import numpy as np
 import torch, torch.nn as nn, torch.nn.functional as F
 from torch.optim import Adam
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 
 from gnn_uq_bench.datasets_fb_twitch import load_facebook_twitch, DOMAIN_SETTINGS
 from gnn_uq_bench.metrics import (
@@ -26,6 +26,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset',      type=str,   default='twitch',
                     choices=['facebook', 'twitch'])
 parser.add_argument('--data_root',    type=str,   default='./data')
+parser.add_argument('--backbone',     type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',         type=int,   default=5)
 parser.add_argument('--hidden',       type=int,   default=64)
 parser.add_argument('--dropout',      type=float, default=0.5)
@@ -39,10 +42,11 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
 
 
-# ── 模型（三层 GCN + BatchNorm，与同事代码一致）─────────────────
+# ── 模型定义（三层 + BN，三种 backbone）────────────────────────
 class GCNModel(nn.Module):
     def __init__(self, nfeat, nhid, nclass, dropout):
         super().__init__()
@@ -51,10 +55,63 @@ class GCNModel(nn.Module):
         self.c3  = GCNConv(nhid,  nclass)
         self.dp  = dropout
 
+    def reset_parameters(self):
+        for m in [self.c1, self.c2, self.c3]: m.reset_parameters()
+        for bn in [self.bn1, self.bn2]: bn.reset_parameters()
+
     def forward(self, x, ei):
         x = F.dropout(F.relu(self.bn1(self.c1(x, ei))), self.dp, self.training)
         x = F.dropout(F.relu(self.bn2(self.c2(x, ei)) + x), self.dp, self.training)
         return self.c3(x, ei)
+
+
+class GATModelFB(nn.Module):
+    def __init__(self, nfeat, nhid, nclass, dropout, heads=4):
+        super().__init__()
+        self.c1  = GATConv(nfeat, nhid, heads=heads, dropout=dropout, concat=True)
+        self.bn1 = nn.BatchNorm1d(nhid * heads)
+        self.c2  = GATConv(nhid * heads, nhid, heads=1, dropout=dropout, concat=False)
+        self.bn2 = nn.BatchNorm1d(nhid)
+        self.c3  = GATConv(nhid, nclass, heads=1, dropout=dropout, concat=False)
+        self.dp  = dropout
+
+    def reset_parameters(self):
+        for m in [self.c1, self.c2, self.c3]: m.reset_parameters()
+        for bn in [self.bn1, self.bn2]: bn.reset_parameters()
+
+    def forward(self, x, ei):
+        x = F.dropout(x, self.dp, self.training)
+        x = F.dropout(F.elu(self.bn1(self.c1(x, ei))), self.dp, self.training)
+        x = F.dropout(F.elu(self.bn2(self.c2(x, ei))), self.dp, self.training)
+        return self.c3(x, ei)
+
+
+class SAGEModelFB(nn.Module):
+    def __init__(self, nfeat, nhid, nclass, dropout):
+        super().__init__()
+        self.c1  = SAGEConv(nfeat, nhid); self.bn1 = nn.BatchNorm1d(nhid)
+        self.c2  = SAGEConv(nhid,  nhid); self.bn2 = nn.BatchNorm1d(nhid)
+        self.c3  = SAGEConv(nhid,  nclass)
+        self.dp  = dropout
+
+    def reset_parameters(self):
+        for m in [self.c1, self.c2, self.c3]: m.reset_parameters()
+        for bn in [self.bn1, self.bn2]: bn.reset_parameters()
+
+    def forward(self, x, ei):
+        x = F.dropout(F.relu(self.bn1(self.c1(x, ei))), self.dp, self.training)
+        x = F.dropout(F.relu(self.bn2(self.c2(x, ei)) + x), self.dp, self.training)
+        return self.c3(x, ei)
+
+
+def _make_model(nfeat, nhid, nclass, dropout):
+    bb = args.backbone.upper()
+    if bb == 'GCN':
+        return GCNModel(nfeat, nhid, nclass, dropout).to(device)
+    elif bb == 'GAT':
+        return GATModelFB(nfeat, nhid, nclass, dropout).to(device)
+    else:
+        return SAGEModelFB(nfeat, nhid, nclass, dropout).to(device)
 
 
 def _entropy(probs):
@@ -62,9 +119,9 @@ def _entropy(probs):
 
 
 def _train_on_domains(train_data, val_data, nfeat, nclass, seed, save_path):
-    """在所有训练域上联合训练，验证域做 early stopping。"""
     torch.manual_seed(seed)
-    model = GCNModel(nfeat, args.hidden, nclass, args.dropout).to(device)
+    model = _make_model(nfeat, args.hidden, nclass, args.dropout)
+    model.reset_parameters()
     opt   = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best, bad, bs = 1e9, 0, None
 
@@ -107,11 +164,8 @@ def main():
      train_data, val_data, test_data,
      domain_names, scaler) = load_facebook_twitch(args.dataset, args.data_root, device=None)
 
-    # ID 域: 取最后一个训练域做 ID-test（与同事代码一致）
     id_dom   = domain_names['train'][-1]
     id_data  = train_data[-1]
-
-    # OOD 域：val + test
     ood_doms  = domain_names['val'] + domain_names['test']
     ood_datas = val_data + test_data
     split_names = ['ID-test'] + [f'OOD-{d}' for d in ood_doms]
@@ -120,15 +174,13 @@ def main():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
 
         model = _train_on_domains(
             train_data, val_data, nfeat, nclass, seed,
-            os.path.join(args.save_dir, f'{args.dataset}_seed{seed}.pth'))
+            os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_seed{seed}.pth'))
 
         run_res = {}
-
-        # ID-test
         probs_id = _infer(model, id_data)
         labels_id = id_data.y.cpu().numpy()
         u_id = _entropy(probs_id)
@@ -137,7 +189,6 @@ def main():
               f'ue_auroc={r_id["ue_auroc"]:.4f}')
         run_res['ID-test'] = r_id
 
-        # OOD-test
         for dom, data_ood in zip(ood_doms, ood_datas):
             probs_ood = _infer(model, data_ood)
             labels_ood = data_ood.y.cpu().numpy()
@@ -145,16 +196,15 @@ def main():
             r_ood = compute_split_metrics(probs_ood, u_ood, labels_ood, nclass)
             r_ood = add_cross_split_metrics(r_id, r_ood, u_id, u_ood)
             name  = f'OOD-{dom}'
-            print(f'  {name:12s} | acc={r_ood["acc"]:.4f} '
-                  f'ood_auroc={r_ood["ood_auroc"]:.4f}')
+            print(f'  {name:12s} | acc={r_ood["acc"]:.4f} ood_auroc={r_ood["ood_auroc"]:.4f}')
             run_res[name] = r_ood
 
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, f'{args.dataset}_ungnn')
+    pref = os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_ungnn')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              f'{args.dataset.capitalize()} — S-BGCN-T-K',
+              f'{args.dataset.capitalize()} — S-BGCN-T-K [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 

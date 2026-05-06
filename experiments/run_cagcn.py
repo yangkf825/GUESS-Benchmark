@@ -1,8 +1,12 @@
 """
 CaGCN — 图卷积温度缩放校准
 ============================
+支持 --backbone GCN / GAT / GraphSAGE
+
 用法:
     python experiments/run_cagcn.py --dataset elliptic --data_dir ./elliptic --runs 5
+    python experiments/run_cagcn.py --dataset elliptic --data_dir ./elliptic --backbone GAT --runs 5
+    python experiments/run_cagcn.py --dataset elliptic --data_dir ./elliptic --backbone GraphSAGE --runs 5
     python experiments/run_cagcn.py --dataset arxiv --data_path ./data.pkl --runs 5
     python experiments/run_cagcn.py --dataset eerm --eerm_dataset cora --eerm_root ./cora --runs 5
 """
@@ -17,7 +21,7 @@ from gnn_uq_bench.datasets import (
     load_elliptic, load_arxiv, load_eerm, stratified_split,
     ELLIPTIC_TRAIN, ELLIPTIC_VAL, ELLIPTIC_TESTS, ARXIV_TRAIN_YEAR, ARXIV_TESTS, ARXIV_OODVAL_YEARS,
 )
-from gnn_uq_bench.models import GCNSparse, CaGCN
+from gnn_uq_bench.models import build_sparse_backbone, CaGCN, CaGCNFlex
 from gnn_uq_bench.metrics import (
     compute_split_metrics, add_cross_split_metrics, build_all_keys, summarize,
 )
@@ -29,6 +33,9 @@ parser.add_argument('--data_dir',      type=str,   default='./elliptic')
 parser.add_argument('--data_path',     type=str,   default='./data.pkl')
 parser.add_argument('--eerm_dataset',  type=str,   default='cora', choices=['cora', 'amazon'])
 parser.add_argument('--eerm_root',     type=str,   default=None)
+parser.add_argument('--backbone',      type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',          type=int,   default=5)
 parser.add_argument('--hidden',        type=int,   default=64)
 parser.add_argument('--dropout',       type=float, default=0.5)
@@ -51,7 +58,13 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
+
+
+def _make_base(nfeat, nclass):
+    return build_sparse_backbone(
+        args.backbone, nfeat, args.hidden, nclass, args.dropout).to(device)
 
 
 def _intra_loss(output, labels):
@@ -81,9 +94,10 @@ def _train_base(model, adj, feat, lab_t, tr_mask, val_mask, save_path, crit,
 
 def _train_cagcn(adj_ov, feat_ov, lab_ov, ov_mask, nclass, base_path, save_path, crit, epochs, seed):
     torch.manual_seed(seed)
-    base = GCNSparse(feat_ov.shape[1], args.hidden, nclass, args.dropout)
+    base = _make_base(feat_ov.shape[1], nclass)
     base.load_state_dict(torch.load(base_path, map_location=device))
-    model = CaGCN(nclass, base).to(device)
+    # CaGCNFlex 支持所有 backbone（温度网络用 GCNConv）
+    model = CaGCNFlex(nclass, base).to(device)
     opt = Adam(filter(lambda p: p.requires_grad, model.parameters()),
                lr=args.lr_for_cal, weight_decay=args.l2_for_cal)
     best, bad = 1e9, 0
@@ -104,9 +118,9 @@ def _train_cagcn(adj_ov, feat_ov, lab_ov, ov_mask, nclass, base_path, save_path,
 
 def _gen_pseudo(adj, feat, lab, nclass, base_path, cagcn_path, dyn_tr, pseudo_lab, seed):
     torch.manual_seed(seed)
-    base = GCNSparse(feat.shape[1], args.hidden, nclass, args.dropout)
+    base = _make_base(feat.shape[1], nclass)
     base.load_state_dict(torch.load(base_path, map_location=device))
-    m = CaGCN(nclass, base).to(device)
+    m = CaGCNFlex(nclass, base).to(device)
     m.load_state_dict(torch.load(cagcn_path, map_location=device)); m.eval()
     with torch.no_grad():
         conf, pred = F.softmax(m(feat, adj), 1).max(1)
@@ -121,9 +135,9 @@ def _gen_pseudo(adj, feat, lab, nclass, base_path, cagcn_path, dyn_tr, pseudo_la
 
 @torch.no_grad()
 def _infer_cagcn(adj, feat, nclass, base_path, cagcn_path):
-    base = GCNSparse(feat.shape[1], args.hidden, nclass, args.dropout)
+    base = _make_base(feat.shape[1], nclass)
     base.load_state_dict(torch.load(base_path, map_location=device))
-    m = CaGCN(nclass, base).to(device); m.eval()
+    m = CaGCNFlex(nclass, base).to(device); m.eval()
     logits = m(feat, adj).cpu().numpy()
     ex = np.exp(logits - logits.max(1, keepdims=True))
     return ex / ex.sum(1, keepdims=True)
@@ -131,13 +145,12 @@ def _infer_cagcn(adj, feat, nclass, base_path, cagcn_path):
 
 def _run_one(seed, adj, feat, lab_t, lab_np, tr_mask, val_mask,
              adj_ov, feat_ov, lab_ov, ov_mask, nclass, crit, prefix):
-    tr_np  = tr_mask.cpu().numpy(); val_np = val_mask.cpu().numpy()
     dyn_tr     = tr_mask.clone()
     pseudo_lab = lab_t.clone()
-    base_path  = os.path.join(args.save_dir, f'{prefix}_seed{seed}_base.pth')
-    cagcn_path = os.path.join(args.save_dir, f'{prefix}_seed{seed}_cagcn.pth')
+    base_path  = os.path.join(args.save_dir, f'{prefix}_{BTAG}_seed{seed}_base.pth')
+    cagcn_path = os.path.join(args.save_dir, f'{prefix}_{BTAG}_seed{seed}_cagcn.pth')
 
-    model = GCNSparse(feat.shape[1], args.hidden, nclass, args.dropout).to(device)
+    model = _make_base(feat.shape[1], nclass)
     for stage in range(1, args.stage + 1):
         last = (stage == args.stage)
         print(f'  [Stage {stage}/{args.stage}]')
@@ -176,7 +189,7 @@ def run_elliptic():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CaGCN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] CaGCN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_tr_np, tr_base,
                                               args.id_val_ratio, args.id_test_ratio, seed)
         tr_mask_t  = torch.tensor(tr_m,  dtype=torch.bool).to(device)
@@ -210,9 +223,9 @@ def run_elliptic():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, 'elliptic_cagcn')
+    pref = os.path.join(args.save_dir, f'elliptic_{BTAG}_cagcn')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              'Elliptic — CaGCN',
+              f'Elliptic — CaGCN [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 
@@ -233,7 +246,7 @@ def run_arxiv():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CaGCN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] CaGCN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_np, base_mask,
                                               args.id_val_ratio, args.id_test_ratio, seed)
         tr_t  = torch.tensor(tr_m, dtype=torch.bool).to(device)
@@ -257,8 +270,9 @@ def run_arxiv():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, 'arxiv_cagcn')
-    summarize(all_runs, split_names, all_keys, pref + '_results.csv', 'OGB-Arxiv — CaGCN',
+    pref = os.path.join(args.save_dir, f'arxiv_{BTAG}_cagcn')
+    summarize(all_runs, split_names, all_keys, pref + '_results.csv',
+              f'OGB-Arxiv — CaGCN [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 
@@ -275,7 +289,7 @@ def run_eerm():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CaGCN EERM Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] CaGCN EERM Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         bp, cp = _run_one(seed, adj, feat_tr, lab_t, lab_np,
                           tr_mask, val_mask, adj, feat_tr, lab_t, val_mask,
                           nclass, crit, f'eerm_{args.eerm_dataset}')
@@ -297,8 +311,9 @@ def run_eerm():
         print(f'  elapsed {time.time()-t0:.1f}s')
 
     ds = args.eerm_dataset
-    pref = os.path.join(args.save_dir, f'{ds}_cagcn')
-    summarize(all_runs, split_names, all_keys, pref + '_results.csv', f'EERM-{ds} — CaGCN',
+    pref = os.path.join(args.save_dir, f'{ds}_{BTAG}_cagcn')
+    summarize(all_runs, split_names, all_keys, pref + '_results.csv',
+              f'EERM-{ds} — CaGCN [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 

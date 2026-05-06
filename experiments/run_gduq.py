@@ -1,10 +1,13 @@
 """
 G-ΔUQ — 随机锚点不确定性估计
 ==============================
+支持 --backbone GCN / GAT / GraphSAGE
 不确定性 u = mean std over anchors（per-node, 跨类平均 sigmoid std）
 
 用法:
     python experiments/run_gduq.py --dataset elliptic --data_dir ./elliptic --runs 5
+    python experiments/run_gduq.py --dataset elliptic --data_dir ./elliptic --backbone GAT --runs 5
+    python experiments/run_gduq.py --dataset elliptic --data_dir ./elliptic --backbone GraphSAGE --runs 5
     python experiments/run_gduq.py --dataset arxiv --data_path ./data.pkl --runs 5
     python experiments/run_gduq.py --dataset eerm --eerm_dataset cora --eerm_root ./cora --runs 5
 """
@@ -32,6 +35,9 @@ parser.add_argument('--data_dir',      type=str,   default='./elliptic')
 parser.add_argument('--data_path',     type=str,   default='./data.pkl')
 parser.add_argument('--eerm_dataset',  type=str,   default='cora', choices=['cora', 'amazon'])
 parser.add_argument('--eerm_root',     type=str,   default=None)
+parser.add_argument('--backbone',      type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',          type=int,   default=5)
 parser.add_argument('--hidden',        type=int,   default=64)
 parser.add_argument('--num_layers',    type=int,   default=2)
@@ -51,15 +57,19 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
 
 
 def _build_gant(nfeat, nclass, feat_np):
-    """建立 GraphANTNode，锚点分布来自训练特征的均值/标准差"""
     mu  = torch.tensor(feat_np.mean(0), dtype=torch.float32)
     std = torch.tensor(feat_np.std(0) + 1e-6, dtype=torch.float32)
-    base = BaseModelNode(nfeat * 2, args.hidden, nclass, args.num_layers, args.dropout)
-    return GraphANTNode(base, mu, std, anchor_type=args.anchor_type, num_classes=nclass).to(device)
+    base = BaseModelNode(nfeat * 2, args.hidden, nclass,
+                         args.num_layers, args.dropout,
+                         backbone=args.backbone)   # ← backbone 参数传入
+    return GraphANTNode(base, mu, std,
+                        anchor_type=args.anchor_type,
+                        num_classes=nclass).to(device)
 
 
 def _train(model, data, tr_mask, val_mask, lab_np, nclass, save_path, seed, class_weight=None):
@@ -109,13 +119,13 @@ def run_elliptic():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  G-DUQ Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] G-DUQ Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_tr_np, tr_base,
                                               args.id_val_ratio, args.id_test_ratio, seed)
         data_tr = Data(x=feat_tr, edge_index=ei_tr, y=lab_tr).to(device)
         model = _build_gant(feat_tr.shape[1], 2, feat_np)
         _train(model, data_tr, tr_m, val_m, lab_tr_np, 2,
-               os.path.join(args.save_dir, f'elliptic_seed{seed}.pth'),
+               os.path.join(args.save_dir, f'elliptic_{BTAG}_seed{seed}.pth'),
                seed, args.class_weight)
 
         probs, u_all = model.infer(data_tr, args.n_anchors)
@@ -135,7 +145,7 @@ def run_elliptic():
             fnp_te = data_te.x.cpu().numpy()
             model_te = _build_gant(data_te.x.shape[1], 2, fnp_te)
             _train(model_te, data_te, tr_te, vl_te, lnp, 2,
-                   os.path.join(args.save_dir, f'elliptic_seed{seed}_te{i}.pth'),
+                   os.path.join(args.save_dir, f'elliptic_{BTAG}_seed{seed}_te{i}.pth'),
                    seed + i + 100, args.class_weight)
             probs_te, u_te = model_te.infer(data_te, args.n_anchors)
             r_ood = compute_split_metrics(probs_te[tm], u_te[tm], lnp[tm], 2, binary=True)
@@ -146,8 +156,9 @@ def run_elliptic():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, 'elliptic_gduq')
-    summarize(all_runs, split_names, all_keys, pref+'_results.csv', 'Elliptic — G-ΔUQ',
+    pref = os.path.join(args.save_dir, f'elliptic_{BTAG}_gduq')
+    summarize(all_runs, split_names, all_keys, pref+'_results.csv',
+              f'Elliptic — G-ΔUQ [{args.backbone}]',
               reliability_path=pref+'_reliability.csv',
               uncertainty_path=pref+'_uncertainty.csv')
 
@@ -165,12 +176,12 @@ def run_arxiv():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  G-DUQ Arxiv Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] G-DUQ Arxiv Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_np, base_mask,
                                               args.id_val_ratio, args.id_test_ratio, seed)
         model = _build_gant(feat.shape[1], nclass, feat_np)
         _train(model, data, tr_m, val_m, lab_np, nclass,
-               os.path.join(args.save_dir, f'arxiv_seed{seed}.pth'), seed)
+               os.path.join(args.save_dir, f'arxiv_{BTAG}_seed{seed}.pth'), seed)
         probs, u_all = model.infer(data, args.n_anchors)
         run_res = {}
         r_id = compute_split_metrics(probs[id_m], u_all[id_m], lab_np[id_m], nclass)
@@ -185,8 +196,9 @@ def run_arxiv():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, 'arxiv_gduq')
-    summarize(all_runs, split_names, all_keys, pref+'_results.csv', 'OGB-Arxiv — G-ΔUQ',
+    pref = os.path.join(args.save_dir, f'arxiv_{BTAG}_gduq')
+    summarize(all_runs, split_names, all_keys, pref+'_results.csv',
+              f'OGB-Arxiv — G-ΔUQ [{args.backbone}]',
               reliability_path=pref+'_reliability.csv',
               uncertainty_path=pref+'_uncertainty.csv')
 
@@ -204,11 +216,11 @@ def run_eerm():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  G-DUQ EERM Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] G-DUQ EERM Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         data_tr = Data(x=feat_tr, edge_index=ei, y=lab_t).to(device)
         model = _build_gant(feat_tr.shape[1], nclass, feat_np)
         _train(model, data_tr, tr_np, val_np, lab_np, nclass,
-               os.path.join(args.save_dir, f'eerm_{args.eerm_dataset}_seed{seed}.pth'), seed)
+               os.path.join(args.save_dir, f'eerm_{args.eerm_dataset}_{BTAG}_seed{seed}.pth'), seed)
         probs_id, u_id = model.infer(data_tr, args.n_anchors)
         run_res = {}
         r_id = compute_split_metrics(probs_id[te_np], u_id[te_np], lab_np[te_np], nclass)
@@ -225,8 +237,9 @@ def run_eerm():
         print(f'  elapsed {time.time()-t0:.1f}s')
 
     ds = args.eerm_dataset
-    pref = os.path.join(args.save_dir, f'{ds}_gduq')
-    summarize(all_runs, split_names, all_keys, pref+'_results.csv', f'EERM-{ds} — G-ΔUQ',
+    pref = os.path.join(args.save_dir, f'{ds}_{BTAG}_gduq')
+    summarize(all_runs, split_names, all_keys, pref+'_results.csv',
+              f'EERM-{ds} — G-ΔUQ [{args.backbone}]',
               reliability_path=pref+'_reliability.csv',
               uncertainty_path=pref+'_uncertainty.csv')
 

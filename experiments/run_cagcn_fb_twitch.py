@@ -1,13 +1,13 @@
 """
 CaGCN — Facebook100 & Twitch（跨域 OOD）
 ==========================================
-图卷积温度缩放校准，不确定性：1 - max(p)
+支持 --backbone GCN / GAT / GraphSAGE
+不确定性：1 - max(p)
 
 用法:
-    python experiments/run_cagcn_fb_twitch.py \
-        --dataset twitch --data_root ./data --runs 5
-    python experiments/run_cagcn_fb_twitch.py \
-        --dataset facebook --data_root ./data --runs 5
+    python experiments/run_cagcn_fb_twitch.py --dataset twitch --data_root ./data --runs 5
+    python experiments/run_cagcn_fb_twitch.py --dataset twitch --data_root ./data --backbone GAT --runs 5
+    python experiments/run_cagcn_fb_twitch.py --dataset twitch --data_root ./data --backbone GraphSAGE --runs 5
 """
 import sys; sys.path.insert(0, 'src')
 
@@ -15,10 +15,9 @@ import os, time, argparse, copy
 import numpy as np
 import torch, torch.nn as nn, torch.nn.functional as F
 from torch.optim import Adam
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, GATConv, SAGEConv
 
 from gnn_uq_bench.datasets_fb_twitch import load_facebook_twitch, DOMAIN_SETTINGS
-from gnn_uq_bench.models import GCNSparse, CaGCN, GraphConvolution
 from gnn_uq_bench.metrics import (
     compute_split_metrics, add_cross_split_metrics, build_all_keys, summarize,
 )
@@ -27,6 +26,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset',      type=str,   default='twitch',
                     choices=['facebook', 'twitch'])
 parser.add_argument('--data_root',    type=str,   default='./data')
+parser.add_argument('--backbone',     type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',         type=int,   default=5)
 parser.add_argument('--hidden',       type=int,   default=64)
 parser.add_argument('--dropout',      type=float, default=0.5)
@@ -43,10 +45,11 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
 
 
-# ── PyG GCN base（与其他 fb_twitch 脚本统一）─────────────────
+# ── Base 模型（三层 + BN，支持三种 backbone）─────────────────────
 class GCNBase(nn.Module):
     def __init__(self, nfeat, nhid, nclass, dp):
         super().__init__()
@@ -60,15 +63,60 @@ class GCNBase(nn.Module):
         return self.c3(x, ei)
 
     def reset_parameters(self):
-        for m in [self.c1, self.c2, self.c3]:
-            m.reset_parameters()
-        for bn in [self.bn1, self.bn2]:
-            bn.reset_parameters()
+        for m in [self.c1, self.c2, self.c3]: m.reset_parameters()
+        for bn in [self.bn1, self.bn2]: bn.reset_parameters()
 
 
-# ── CaGCN for PyG（用 PyG GCNConv 替代稀疏 adj）────────────────
+class GATBase(nn.Module):
+    def __init__(self, nfeat, nhid, nclass, dp, heads=4):
+        super().__init__()
+        self.c1  = GATConv(nfeat, nhid, heads=heads, dropout=dp, concat=True)
+        self.bn1 = nn.BatchNorm1d(nhid * heads)
+        self.c2  = GATConv(nhid * heads, nhid, heads=1, dropout=dp, concat=False)
+        self.bn2 = nn.BatchNorm1d(nhid)
+        self.c3  = GATConv(nhid, nclass, heads=1, dropout=dp, concat=False)
+        self.dp  = dp
+
+    def forward(self, x, ei):
+        x = F.dropout(x, self.dp, self.training)
+        x = F.dropout(F.elu(self.bn1(self.c1(x, ei))), self.dp, self.training)
+        x = F.dropout(F.elu(self.bn2(self.c2(x, ei))), self.dp, self.training)
+        return self.c3(x, ei)
+
+    def reset_parameters(self):
+        for m in [self.c1, self.c2, self.c3]: m.reset_parameters()
+        for bn in [self.bn1, self.bn2]: bn.reset_parameters()
+
+
+class SAGEBase(nn.Module):
+    def __init__(self, nfeat, nhid, nclass, dp):
+        super().__init__()
+        self.c1  = SAGEConv(nfeat, nhid); self.bn1 = nn.BatchNorm1d(nhid)
+        self.c2  = SAGEConv(nhid,  nhid); self.bn2 = nn.BatchNorm1d(nhid)
+        self.c3  = SAGEConv(nhid,  nclass); self.dp = dp
+
+    def forward(self, x, ei):
+        x = F.dropout(F.relu(self.bn1(self.c1(x, ei))), self.dp, self.training)
+        x = F.dropout(F.relu(self.bn2(self.c2(x, ei)) + x), self.dp, self.training)
+        return self.c3(x, ei)
+
+    def reset_parameters(self):
+        for m in [self.c1, self.c2, self.c3]: m.reset_parameters()
+        for bn in [self.bn1, self.bn2]: bn.reset_parameters()
+
+
+def _make_base_model(nfeat, nclass):
+    bb = args.backbone.upper()
+    if bb == 'GCN':
+        return GCNBase(nfeat, args.hidden, nclass, args.dropout).to(device)
+    elif bb == 'GAT':
+        return GATBase(nfeat, args.hidden, nclass, args.dropout).to(device)
+    else:
+        return SAGEBase(nfeat, args.hidden, nclass, args.dropout).to(device)
+
+
+# ── CaGCN 温度网络（始终用 GCNConv，与 backbone 解耦）────────────
 class CaGCNPyG(nn.Module):
-    """图卷积温度缩放：base 冻结，两层 GCN 学 per-node T"""
     def __init__(self, nclass, base_model):
         super().__init__()
         self.base = base_model
@@ -93,7 +141,7 @@ def _intra_loss(output, labels):
 
 def _train_base(nfeat, nclass, train_data, val_data, seed, save_path):
     torch.manual_seed(seed)
-    model = GCNBase(nfeat, args.hidden, nclass, args.dropout).to(device)
+    model = _make_base_model(nfeat, nclass)
     model.reset_parameters()
     opt  = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best, bad, bs = 1e9, 0, None
@@ -172,14 +220,14 @@ def main():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CaGCN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] CaGCN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
 
         base = _train_base(
             nfeat, nclass, train_data, val_data, seed,
-            os.path.join(args.save_dir, f'{args.dataset}_base_seed{seed}.pth'))
+            os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_base_seed{seed}.pth'))
         cagcn = _train_cagcn(
             base, nclass, val_data, seed,
-            os.path.join(args.save_dir, f'{args.dataset}_cagcn_seed{seed}.pth'))
+            os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_cagcn_seed{seed}.pth'))
 
         run_res = {}
         probs_id = _infer(cagcn, id_data)
@@ -202,9 +250,9 @@ def main():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, f'{args.dataset}_cagcn')
+    pref = os.path.join(args.save_dir, f'{args.dataset}_{BTAG}_cagcn')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              f'{args.dataset.capitalize()} — CaGCN',
+              f'{args.dataset.capitalize()} — CaGCN [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 

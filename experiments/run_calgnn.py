@@ -1,8 +1,12 @@
 """
-CalGNN — GCN + 6种后处理校准 (Uncal/TS/HB/Iso/BBQ/MetaCal/RBS)
-==================================================================
+CalGNN — GCN/GAT/GraphSAGE + 6种后处理校准
+============================================
+支持 --backbone GCN / GAT / GraphSAGE
+
 用法:
     python experiments/run_calgnn.py --dataset elliptic --data_dir ./elliptic --runs 5
+    python experiments/run_calgnn.py --dataset elliptic --data_dir ./elliptic --backbone GAT --runs 5
+    python experiments/run_calgnn.py --dataset elliptic --data_dir ./elliptic --backbone GraphSAGE --runs 5
     python experiments/run_calgnn.py --dataset arxiv --data_path ./data.pkl --runs 5
     python experiments/run_calgnn.py --dataset eerm --eerm_dataset cora --eerm_root ./cora --runs 5
 """
@@ -19,7 +23,7 @@ from gnn_uq_bench.datasets import (
     ELLIPTIC_TRAIN, ELLIPTIC_VAL, ELLIPTIC_TESTS,
     ARXIV_TRAIN_YEAR, ARXIV_TESTS, ARXIV_OODVAL_YEARS,
 )
-from gnn_uq_bench.models import GCNSparse, GCNPyG, GATModel
+from gnn_uq_bench.models import build_sparse_backbone
 from gnn_uq_bench.calibration import (
     TemperatureScaling, HistogramBinning, IsotonicCalib, BBQ,
     MetaCalMisCoverage, compute_sm_conf, rbs_fit, apply_rbs,
@@ -35,7 +39,9 @@ parser.add_argument('--data_dir',      type=str,   default='./elliptic')
 parser.add_argument('--data_path',     type=str,   default='./data.pkl')
 parser.add_argument('--eerm_dataset',  type=str,   default='cora', choices=['cora', 'amazon'])
 parser.add_argument('--eerm_root',     type=str,   default=None)
-parser.add_argument('--model',         type=str,   default='GCN', choices=['GCN', 'GAT'])
+parser.add_argument('--backbone',      type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',          type=int,   default=5)
 parser.add_argument('--hidden',        type=int,   default=64)
 parser.add_argument('--dropout',       type=float, default=0.5)
@@ -56,17 +62,16 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
 
-# CalGNN 只输出 Uncal 和 RBS（论文主要对比）
 CAL_METHODS     = ['Uncal', 'TS', 'HB', 'Iso', 'BBQ', 'MetaCal', 'RBS']
 CAL_METHODS_OUT = ['Uncal', 'RBS']
 
 
-def _get_model(nfeat, nclass):
-    if args.model == 'GCN':
-        return GCNSparse(nfeat, args.hidden, nclass, args.dropout).to(device)
-    return GCNPyG(nfeat, args.hidden, nclass, args.dropout).to(device)
+def _make_model(nfeat, nclass):
+    return build_sparse_backbone(
+        args.backbone, nfeat, args.hidden, nclass, args.dropout).to(device)
 
 
 def _cal_loss(y_true, logits, lmbda, epoch, epochs, bin_num=15):
@@ -85,14 +90,10 @@ def _cal_loss(y_true, logits, lmbda, epoch, epochs, bin_num=15):
 
 
 def _train(nfeat, nclass, adj_or_ei, feat, lab_np, lab_t, tr_mask, val_mask,
-           save_path, crit, is_pyg, seed, epoch_override=None):
+           save_path, crit, seed, epoch_override=None):
     torch.manual_seed(seed)
-    if args.model == 'GCN':
-        model = GCNSparse(nfeat, args.hidden, nclass, args.dropout).to(device)
-        model.reset_parameters()
-    else:
-        model = GCNPyG(nfeat, args.hidden, nclass, args.dropout).to(device)
-        model.reset_parameters()
+    model = _make_model(nfeat, nclass)
+    model.reset_parameters()
     opt = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     lab_t2 = torch.tensor(lab_np, dtype=torch.long).to(device) if lab_t is None else lab_t
     tr_t  = torch.tensor(tr_mask, dtype=torch.bool).to(device)
@@ -132,14 +133,12 @@ def _fit_calibrators(ov_logits, ov_probs, ov_labels, ei_ov, N_ov, probs_all_t):
     bbq= BBQ().fit(ov_probs, ov_labels)
     mc = MetaCalMisCoverage().fit(ov_logits, ov_labels)
     sm = compute_sm_conf(ei_ov, N_ov, probs_all_t, device)
-    ov_idx = np.where(np.ones(len(ov_labels), dtype=bool))[0]  # all
     T_rbs, bins_rbs = rbs_fit(sm, ov_logits, ov_labels, args.num_bins_rbs)
     return ts, hb, iso, bbq, mc, T_rbs, bins_rbs, sm
 
 
 def _eval_split(logits, probs, labels, nclass, binary,
                 ts, hb, iso, bbq, mc, T_rbs, bins_rbs, sm_conf_split):
-    u = 1. - probs.max(1)
     all_p = {
         'Uncal':   probs,
         'TS':      ts.predict_proba(logits),
@@ -159,13 +158,13 @@ def _eval_split(logits, probs, labels, nclass, binary,
 def run_elliptic():
     all_keys = build_all_keys(binary=True)
     print('\n[Elliptic] Loading...')
-    # Training graph (sparse adj + edge_index for sm_conf)
     adj_tr, ei_tr, feat_tr, _, lab_tr_np, N_tr = load_elliptic(ELLIPTIC_TRAIN, args.data_dir, device)
     adj_ov, ei_ov, feat_ov, _, lab_ov_np, N_ov = load_elliptic(ELLIPTIC_VAL,   args.data_dir, device)
     tr_base = (lab_tr_np >= 0); ov_mask = (lab_ov_np >= 0)
     crit = (nn.CrossEntropyLoss(weight=torch.FloatTensor([1., args.class_weight]).to(device))
             if args.class_weight else nn.CrossEntropyLoss())
 
+    # GATSparse/SAGESparse 内部自动转 edge_index，外部统一传 adj
     test_graphs = []
     for i, steps in enumerate(ELLIPTIC_TESTS):
         a, ei, f, _, lnp, N = load_elliptic(steps, args.data_dir, device)
@@ -178,31 +177,26 @@ def run_elliptic():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CalGNN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] CalGNN Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_tr_np, tr_base,
                                               args.id_val_ratio, args.id_test_ratio, seed)
-        adj_or_ei = adj_tr if args.model == 'GCN' else ei_tr
-        model = _train(feat_tr.shape[1], 2, adj_or_ei, feat_tr, lab_tr_np, None,
+        model = _train(feat_tr.shape[1], 2, adj_tr, feat_tr, lab_tr_np, None,
                        tr_m, val_m,
-                       os.path.join(args.save_dir, f'elliptic_seed{seed}.pth'), crit,
-                       args.model != 'GCN', seed)
+                       os.path.join(args.save_dir, f'elliptic_{BTAG}_seed{seed}.pth'), crit, seed)
 
-        ov_logits, ov_probs = _all_logits_probs(model, feat_ov, adj_ov if args.model == 'GCN' else ei_ov)
+        ov_logits, ov_probs = _all_logits_probs(model, feat_ov, adj_ov)
         ov_logits = ov_logits[ov_mask]; ov_probs = ov_probs[ov_mask]
         ov_labels = lab_ov_np[ov_mask]
 
-        probs_all_t = F.softmax(model(feat_ov, adj_ov if args.model=='GCN' else ei_ov), dim=1)
-        sm_ov = compute_sm_conf(ei_ov, N_ov, probs_all_t, device)
+        probs_all_t = F.softmax(model(feat_ov, adj_ov), dim=1)
         ts, hb, iso, bbq, mc, T_rbs, bins_rbs, _ = _fit_calibrators(
             ov_logits, ov_probs, ov_labels, ei_ov, N_ov, probs_all_t)
 
-        # ID-test
-        id_logits, id_probs = _all_logits_probs(model, feat_tr, adj_or_ei)
-        probs_all_tr_t = F.softmax(model(feat_tr, adj_or_ei), dim=1)
+        id_logits, id_probs = _all_logits_probs(model, feat_tr, adj_tr)
+        probs_all_tr_t = F.softmax(model(feat_tr, adj_tr), dim=1)
         sm_tr = compute_sm_conf(ei_tr, N_tr, probs_all_tr_t, device)
         id_res = _eval_split(id_logits[id_m], id_probs[id_m], lab_tr_np[id_m],
-                              2, True, ts, hb, iso, bbq, mc,
-                              T_rbs, bins_rbs, sm_tr[id_m])
+                              2, True, ts, hb, iso, bbq, mc, T_rbs, bins_rbs, sm_tr[id_m])
         for cm in CAL_METHODS_OUT:
             print(f'  ID-test [{cm}] acc={id_res[cm]["acc"]:.4f} ece={id_res[cm]["ece"]:.4f}')
 
@@ -216,26 +210,22 @@ def run_elliptic():
             vl_te = np.zeros(N_te, bool); vl_te[te_idx[perm[nh:]]] = True
             if vl_te.sum() == 0: vl_te = tr_te.copy()
 
-            a_te_use = a_te if args.model=='GCN' else ei_te
-            model_te = _train(f_te.shape[1], 2, a_te_use, f_te, lnp, None,
+            model_te = _train(f_te.shape[1], 2, a_te, f_te, lnp, None,
                                tr_te, vl_te,
-                               os.path.join(args.save_dir, f'elliptic_seed{seed}_te{i}.pth'),
-                               crit, args.model != 'GCN', seed + i + 100)
+                               os.path.join(args.save_dir, f'elliptic_{BTAG}_seed{seed}_te{i}.pth'),
+                               crit, seed + i + 100)
 
-            te_logits, te_probs = _all_logits_probs(model_te, f_te, a_te_use)
-            pall_t = F.softmax(model_te(f_te, a_te_use), dim=1)
+            te_logits, te_probs = _all_logits_probs(model_te, f_te, a_te)
+            pall_t = F.softmax(model_te(f_te, a_te), dim=1)
             sm_te  = compute_sm_conf(ei_te, N_te, pall_t, device)
 
-            # Refit calibrators on this OOD graph's val split
             ov_l2 = te_logits[vl_te]; ov_p2 = te_probs[vl_te]; ov_lab2 = lnp[vl_te]
-            pov_t  = F.softmax(model_te(f_te, a_te_use), dim=1)
-            sm_ov2 = compute_sm_conf(ei_te, N_te, pov_t, device)
+            pov_t  = F.softmax(model_te(f_te, a_te), dim=1)
             ts2, hb2, iso2, bbq2, mc2, T2, bins2, _ = _fit_calibrators(
                 ov_l2, ov_p2, ov_lab2, ei_te, N_te, pov_t)
 
             te_res = _eval_split(te_logits[tm], te_probs[tm], lnp[tm],
-                                  2, True, ts2, hb2, iso2, bbq2, mc2,
-                                  T2, bins2, sm_te[tm])
+                                  2, True, ts2, hb2, iso2, bbq2, mc2, T2, bins2, sm_te[tm])
             name = split_names[1+i]
             for cm in CAL_METHODS_OUT:
                 r_ood = add_cross_split_metrics(
@@ -248,9 +238,9 @@ def run_elliptic():
         print(f'  elapsed {time.time()-t0:.1f}s')
 
     for cm in CAL_METHODS_OUT:
-        pref = os.path.join(args.save_dir, f'elliptic_calgnn_{cm}')
+        pref = os.path.join(args.save_dir, f'elliptic_{BTAG}_calgnn_{cm}')
         summarize_calgnn(all_runs_per_method[cm], split_names, all_keys,
-                         pref + '_results.csv', f'Elliptic — CalGNN [{cm}]',
+                         pref + '_results.csv', f'Elliptic — CalGNN [{args.backbone}][{cm}]',
                          [cm],
                          reliability_path=pref + '_reliability.csv',
                          uncertainty_path=pref + '_uncertainty.csv')
@@ -265,29 +255,26 @@ def run_arxiv():
     oy0, oy1  = ARXIV_OODVAL_YEARS
     ov_mask   = (node_year >= oy0) & (node_year <= oy1)
     crit = nn.CrossEntropyLoss()
-    adj_or_ei = adj if args.model == 'GCN' else ei
     split_names = ['ID-test'] + [f'OOD-test_{i}({ty0}-{ty1})'
                                   for i, (ty0, ty1) in enumerate(ARXIV_TESTS)]
     all_runs_pm = {m: [] for m in CAL_METHODS_OUT}
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CalGNN Arxiv Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] CalGNN Arxiv Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_np, base_mask,
                                               args.id_val_ratio, args.id_test_ratio, seed)
-        model = _train(feat.shape[1], nclass, adj_or_ei, feat, lab_np, lab_t,
+        model = _train(feat.shape[1], nclass, adj, feat, lab_np, lab_t,
                        tr_m, val_m,
-                       os.path.join(args.save_dir, f'arxiv_seed{seed}.pth'),
-                       crit, args.model != 'GCN', seed)
+                       os.path.join(args.save_dir, f'arxiv_{BTAG}_seed{seed}.pth'),
+                       crit, seed)
 
-        logits_all, probs_all = _all_logits_probs(model, feat, adj_or_ei)
-        pall_t  = F.softmax(model(feat, adj_or_ei), dim=1)
+        logits_all, probs_all = _all_logits_probs(model, feat, adj)
+        pall_t  = F.softmax(model(feat, adj), dim=1)
         sm_all  = compute_sm_conf(ei, N, pall_t, device)
 
         ov_l = logits_all[ov_mask]; ov_p = probs_all[ov_mask]; ov_lab = lab_np[ov_mask]
-        pov_t = pall_t[ov_mask]
-        ts,hb,iso,bbq,mc,T_rbs,bins_rbs,_ = _fit_calibrators(
-            ov_l, ov_p, ov_lab, ei, N, pall_t)
+        ts,hb,iso,bbq,mc,T_rbs,bins_rbs,_ = _fit_calibrators(ov_l, ov_p, ov_lab, ei, N, pall_t)
 
         id_res = _eval_split(logits_all[id_m], probs_all[id_m], lab_np[id_m],
                               nclass, False, ts,hb,iso,bbq,mc,T_rbs,bins_rbs, sm_all[id_m])
@@ -311,9 +298,9 @@ def run_arxiv():
         print(f'  elapsed {time.time()-t0:.1f}s')
 
     for cm in CAL_METHODS_OUT:
-        pref = os.path.join(args.save_dir, f'arxiv_calgnn_{cm}')
+        pref = os.path.join(args.save_dir, f'arxiv_{BTAG}_calgnn_{cm}')
         summarize_calgnn(all_runs_pm[cm], split_names, all_keys,
-                         pref+'_results.csv', f'OGB-Arxiv — CalGNN [{cm}]', [cm],
+                         pref+'_results.csv', f'OGB-Arxiv — CalGNN [{args.backbone}][{cm}]', [cm],
                          reliability_path=pref+'_reliability.csv',
                          uncertainty_path=pref+'_uncertainty.csv')
 
@@ -326,33 +313,31 @@ def run_eerm():
     feat_tr = feat_envs[0]; feat_oods = feat_envs[2:]
     tr_np = tr_mask.cpu().numpy(); val_np = val_mask.cpu().numpy(); te_np = test_mask.cpu().numpy()
     crit = nn.CrossEntropyLoss()
-    adj_or_ei = adj if args.model == 'GCN' else ei
     split_names = ['ID-test'] + ood_names
     all_runs_pm = {m: [] for m in CAL_METHODS_OUT}
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  CalGNN EERM Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
-        model = _train(feat_tr.shape[1], nclass, adj_or_ei, feat_tr, lab_np, lab_t,
+        print(f'\n{"="*60}\n  [{args.backbone}] CalGNN EERM Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        model = _train(feat_tr.shape[1], nclass, adj, feat_tr, lab_np, lab_t,
                        tr_np, val_np,
-                       os.path.join(args.save_dir, f'eerm_{args.eerm_dataset}_seed{seed}.pth'),
-                       crit, args.model != 'GCN', seed)
+                       os.path.join(args.save_dir, f'eerm_{args.eerm_dataset}_{BTAG}_seed{seed}.pth'),
+                       crit, seed)
 
-        pall_t = F.softmax(model(feat_tr, adj_or_ei), dim=1)
-        logits_all, probs_all = _all_logits_probs(model, feat_tr, adj_or_ei)
+        pall_t = F.softmax(model(feat_tr, adj), dim=1)
+        logits_all, probs_all = _all_logits_probs(model, feat_tr, adj)
         sm_all = compute_sm_conf(ei, N, pall_t, device)
 
         ov_l = logits_all[val_np]; ov_p = probs_all[val_np]; ov_lab = lab_np[val_np]
-        ts,hb,iso,bbq,mc,T_rbs,bins_rbs,_ = _fit_calibrators(
-            ov_l, ov_p, ov_lab, ei, N, pall_t)
+        ts,hb,iso,bbq,mc,T_rbs,bins_rbs,_ = _fit_calibrators(ov_l, ov_p, ov_lab, ei, N, pall_t)
 
         id_res = _eval_split(logits_all[te_np], probs_all[te_np], lab_np[te_np],
                               nclass, False, ts,hb,iso,bbq,mc,T_rbs,bins_rbs, sm_all[te_np])
         run_per_m = {m: {'ID-test': id_res[m]} for m in CAL_METHODS_OUT}
 
         for feat_ood, name in zip(feat_oods, ood_names):
-            pood_t = F.softmax(model(feat_ood, adj_or_ei), dim=1)
-            log_ood, p_ood = _all_logits_probs(model, feat_ood, adj_or_ei)
+            pood_t = F.softmax(model(feat_ood, adj), dim=1)
+            log_ood, p_ood = _all_logits_probs(model, feat_ood, adj)
             sm_ood = compute_sm_conf(ei, N, pood_t, device)
             te_res = _eval_split(log_ood[te_np], p_ood[te_np], lab_np[te_np],
                                   nclass, False, ts,hb,iso,bbq,mc,T_rbs,bins_rbs, sm_ood[te_np])
@@ -367,9 +352,9 @@ def run_eerm():
 
     ds = args.eerm_dataset
     for cm in CAL_METHODS_OUT:
-        pref = os.path.join(args.save_dir, f'{ds}_calgnn_{cm}')
+        pref = os.path.join(args.save_dir, f'{ds}_{BTAG}_calgnn_{cm}')
         summarize_calgnn(all_runs_pm[cm], split_names, all_keys,
-                         pref+'_results.csv', f'EERM-{ds} — CalGNN [{cm}]', [cm],
+                         pref+'_results.csv', f'EERM-{ds} — CalGNN [{args.backbone}][{cm}]', [cm],
                          reliability_path=pref+'_reliability.csv',
                          uncertainty_path=pref+'_uncertainty.csv')
 

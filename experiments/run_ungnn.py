@@ -1,11 +1,14 @@
 """
-S-BGCN-T-K (Vanilla GCN + entropy uncertainty)
+S-BGCN-T-K (Vanilla GNN + entropy uncertainty)
 ===============================================
+支持 --backbone GCN / GAT / GraphSAGE
+
 用法:
     python experiments/run_ungnn.py --dataset elliptic --data_dir ./elliptic --runs 5
+    python experiments/run_ungnn.py --dataset elliptic --data_dir ./elliptic --backbone GAT --runs 5
+    python experiments/run_ungnn.py --dataset elliptic --data_dir ./elliptic --backbone GraphSAGE --runs 5
     python experiments/run_ungnn.py --dataset arxiv --data_path ./data.pkl --runs 5
     python experiments/run_ungnn.py --dataset eerm --eerm_dataset cora --eerm_root ./cora --runs 5
-    python experiments/run_ungnn.py --dataset eerm --eerm_dataset amazon --eerm_root ./amazon --runs 5
 """
 import sys; sys.path.insert(0, 'src')
 
@@ -19,7 +22,7 @@ from gnn_uq_bench.datasets import (
     load_elliptic, load_arxiv, load_eerm, stratified_split,
     ELLIPTIC_TRAIN, ELLIPTIC_TESTS, ARXIV_TRAIN_YEAR, ARXIV_TESTS,
 )
-from gnn_uq_bench.models import GCNSparse
+from gnn_uq_bench.models import build_sparse_backbone
 from gnn_uq_bench.metrics import (
     compute_split_metrics, add_cross_split_metrics, build_all_keys, summarize,
 )
@@ -31,6 +34,9 @@ parser.add_argument('--data_dir',      type=str,   default='./elliptic')
 parser.add_argument('--data_path',     type=str,   default='./data.pkl')
 parser.add_argument('--eerm_dataset',  type=str,   default='cora', choices=['cora', 'amazon'])
 parser.add_argument('--eerm_root',     type=str,   default=None)
+parser.add_argument('--backbone',      type=str,   default='GCN',
+                    choices=['GCN', 'GAT', 'GraphSAGE'],
+                    help='GNN backbone: GCN (default) / GAT / GraphSAGE')
 parser.add_argument('--runs',          type=int,   default=5)
 parser.add_argument('--hidden',        type=int,   default=64)
 parser.add_argument('--dropout',       type=float, default=0.5)
@@ -47,7 +53,13 @@ args = parser.parse_args()
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'[设备] {device}')
+BTAG = args.backbone.lower()
+print(f'[设备] {device}  [backbone] {args.backbone}')
+
+
+def _make_model(nfeat, nclass):
+    return build_sparse_backbone(
+        args.backbone, nfeat, args.hidden, nclass, args.dropout).to(device)
 
 
 def _entropy(probs):
@@ -107,12 +119,12 @@ def run_elliptic():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_tr_np, tr_base,
                                               args.id_val_ratio, args.id_test_ratio, seed)
-        model = GCNSparse(feat_tr.shape[1], args.hidden, 2, args.dropout).to(device)
+        model = _make_model(feat_tr.shape[1], 2)
         _train(model, adj_tr, feat_tr, lab_tr_np, tr_m, val_m,
-               os.path.join(args.save_dir, f'elliptic_seed{seed}.pth'),
+               os.path.join(args.save_dir, f'elliptic_{BTAG}_seed{seed}.pth'),
                2, seed, args.class_weight)
 
         run_res = {}
@@ -131,9 +143,9 @@ def run_elliptic():
             vl_te = np.zeros(N_te, bool); vl_te[te_idx[perm[nh:]]] = True
             if vl_te.sum() == 0: vl_te = tr_te.copy()
 
-            model_te = GCNSparse(feat_te.shape[1], args.hidden, 2, args.dropout).to(device)
+            model_te = _make_model(feat_te.shape[1], 2)
             _train(model_te, adj_te, feat_te, lab_te_np, tr_te, vl_te,
-                   os.path.join(args.save_dir, f'elliptic_seed{seed}_te{i}.pth'),
+                   os.path.join(args.save_dir, f'elliptic_{BTAG}_seed{seed}_te{i}.pth'),
                    2, seed + i + 100, args.class_weight)
             probs_te = _infer(model_te, feat_te, adj_te)
             u_ood    = _entropy(probs_te[te_mask])
@@ -147,9 +159,9 @@ def run_elliptic():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, 'elliptic_ungnn')
+    pref = os.path.join(args.save_dir, f'elliptic_{BTAG}_ungnn')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              'Elliptic — S-BGCN-T-K',
+              f'Elliptic — S-BGCN-T-K [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 
@@ -165,12 +177,12 @@ def run_arxiv():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        print(f'\n{"="*60}\n  [{args.backbone}] Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
         tr_m, val_m, id_m = stratified_split(lab_np, base_mask,
                                               args.id_val_ratio, args.id_test_ratio, seed)
-        model = GCNSparse(feat_t.shape[1], args.hidden, nclass, args.dropout).to(device)
+        model = _make_model(feat_t.shape[1], nclass)
         _train(model, adj_t, feat_t, lab_np, tr_m, val_m,
-               os.path.join(args.save_dir, f'arxiv_seed{seed}.pth'), nclass, seed)
+               os.path.join(args.save_dir, f'arxiv_{BTAG}_seed{seed}.pth'), nclass, seed)
 
         probs_all = _infer(model, feat_t, adj_t)
         run_res = {}
@@ -190,9 +202,9 @@ def run_arxiv():
         all_runs.append(run_res)
         print(f'  elapsed {time.time()-t0:.1f}s')
 
-    pref = os.path.join(args.save_dir, 'arxiv_ungnn')
+    pref = os.path.join(args.save_dir, f'arxiv_{BTAG}_ungnn')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              'OGB-Arxiv — S-BGCN-T-K',
+              f'OGB-Arxiv — S-BGCN-T-K [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 
@@ -211,10 +223,10 @@ def run_eerm():
 
     for r in range(args.runs):
         seed = args.base_seed + r; t0 = time.time()
-        print(f'\n{"="*60}\n  Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
-        model = GCNSparse(feat_tr.shape[1], args.hidden, nclass, args.dropout).to(device)
+        print(f'\n{"="*60}\n  [{args.backbone}] Run {r+1}/{args.runs}  seed={seed}\n{"="*60}')
+        model = _make_model(feat_tr.shape[1], nclass)
         _train(model, adj, feat_tr, lab_np, tr_np, val_np,
-               os.path.join(args.save_dir, f'eerm_{args.eerm_dataset}_seed{seed}.pth'),
+               os.path.join(args.save_dir, f'eerm_{args.eerm_dataset}_{BTAG}_seed{seed}.pth'),
                nclass, seed)
 
         run_res = {}
@@ -236,9 +248,9 @@ def run_eerm():
         print(f'  elapsed {time.time()-t0:.1f}s')
 
     ds   = args.eerm_dataset
-    pref = os.path.join(args.save_dir, f'{ds}_ungnn')
+    pref = os.path.join(args.save_dir, f'{ds}_{BTAG}_ungnn')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              f'EERM-{ds} — S-BGCN-T-K',
+              f'EERM-{ds} — S-BGCN-T-K [{args.backbone}]',
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 

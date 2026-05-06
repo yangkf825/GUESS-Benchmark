@@ -1,13 +1,14 @@
 """
 GPN — Facebook100 & Twitch（跨域 OOD）
 ========================================
+注意：GPN 使用自有的 normalizing flow encoder，不依赖 GCN/GAT/SAGE backbone，
+      因此无 --backbone 参数。
+
 不确定性：1 / alpha.sum()（Dirichlet evidence 倒数）
 
 用法:
-    python experiments/run_gpn_fb_twitch.py \
-        --dataset twitch --data_root ./data --runs 3
-    python experiments/run_gpn_fb_twitch.py \
-        --dataset facebook --data_root ./data --runs 3
+    python experiments/run_gpn_fb_twitch.py --dataset twitch --data_root ./data --runs 3
+    python experiments/run_gpn_fb_twitch.py --dataset facebook --data_root ./data --runs 3
 """
 import sys; sys.path.insert(0, 'src')
 
@@ -84,7 +85,6 @@ def _train(train_data, val_data, nfeat, nclass, seed, save_path):
             for data in val_data:
                 data = data.to(device)
                 ei, ew = sym_norm_edge(data.edge_index, data.x.size(0))
-                # create a dummy all-true train_mask for GPN forward
                 tr_m = torch.ones(data.x.size(0), dtype=torch.bool, device=device)
                 pred = model(data, tr_m, ei, ew)
                 v_loss += gpn_ce_loss(pred['log_soft'], data.y).item()
@@ -119,9 +119,6 @@ def main():
     (label_map, nclass, nfeat,
      train_data, val_data, test_data,
      domain_names, scaler) = load_facebook_twitch(args.dataset, args.data_root, device=None)
-
-    # GPN 的 forward 需要 data.x — 直接用 PyG Data，不需要 train_mask
-    # 这里 train_mask 传全 True（跨域训练没有节点级别 split）
 
     id_dom   = domain_names['train'][-1]
     id_data  = train_data[-1]

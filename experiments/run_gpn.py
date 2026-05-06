@@ -1,6 +1,9 @@
 """
 GPN — Graph Posterior Network
 ==============================
+注意：GPN 使用自有的 normalizing flow encoder，不依赖 GCN/GAT/SAGE backbone，
+      因此无 --backbone 参数。如需切换图传播方式请修改 GPNModel 内部 APPNPProp。
+
 不确定性 u = 1 / alpha.sum(-1)（总 evidence 倒数，越低越不确定）
 
 用法:
@@ -62,10 +65,6 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'[设备] {device}')
 
 
-def _make_data(feat, ei, labels_t, N):
-    return Data(x=feat, edge_index=ei, y=labels_t).to(device)
-
-
 def _train_gpn(data, tr_mask_np, val_mask_np, nfeat, nclass, N, save_path, seed):
     torch.manual_seed(seed); np.random.seed(seed)
     data = data.to(device)
@@ -101,7 +100,7 @@ def _train_gpn(data, tr_mask_np, val_mask_np, nfeat, nclass, N, save_path, seed)
 
         model.eval()
         with torch.no_grad():
-            pv   = model(data, tr_t, ei, ew)
+            pv    = model(data, tr_t, ei, ew)
             vloss = gpn_ce_loss(pv['log_soft'][val_t], data.y[val_t]).item()
         if vloss < best:
             bs = {k: v.clone() for k, v in model.state_dict().items()}
@@ -123,7 +122,6 @@ def _train_gpn(data, tr_mask_np, val_mask_np, nfeat, nclass, N, save_path, seed)
 
 @torch.no_grad()
 def _infer_gpn(model_state, feat_new, ei_orig, lab_t, tr_mask_np, nfeat, nclass, N):
-    """用已有权重对新特征（EERM OOD 环境）推理"""
     data = Data(x=feat_new, edge_index=ei_orig, y=lab_t).to(device)
     ei, ew = sym_norm_edge(data.edge_index, N)
     ei = ei.to(device); ew = ew.to(device)
@@ -261,7 +259,6 @@ def run_eerm():
                                         os.path.join(args.save_dir,
                                                       f'eerm_{args.eerm_dataset}_seed{seed}'),
                                         seed)
-        # save model state for OOD inference
         state = torch.load(os.path.join(args.save_dir,
                                          f'eerm_{args.eerm_dataset}_seed{seed}.pth'),
                             map_location=device)
