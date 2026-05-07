@@ -278,6 +278,8 @@ python plot_results.py --data_dir ./results --out_dir ./figures --dataset ellipt
 python plot_results.py --data_dir ./results --out_dir ./figures --dataset arxiv
 python plot_results.py --data_dir ./results --out_dir ./figures --dataset twitch
 python plot_results.py --data_dir ./results --out_dir ./figures --dataset facebook
+python plot_results.py --data_dir ./results --out_dir ./figures --dataset cora
+python plot_results.py --data_dir ./results --out_dir ./figures --dataset amazon
 ```
  
 ---
