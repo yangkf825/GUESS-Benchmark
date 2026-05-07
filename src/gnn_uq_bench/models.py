@@ -1,26 +1,14 @@
 """
 gnn_uq_bench.models
 ====================
-支持三种 backbone：GCN / GAT / GraphSAGE
-
-Backbone:
-  GCNSparse    — 稀疏矩阵 GCN（接受 sparse_adj）
-  GATSparse    — GAT，接口兼容 GCNSparse（自动处理 sparse_adj → edge_index）
-  SAGESparse   — GraphSAGE，接口兼容 GCNSparse
-  GCNPyG       — PyG GCNConv（接受 edge_index）
-  GATModel     — PyG GATConv（接受 edge_index）
-  SAGEModel    — PyG SAGEConv（接受 edge_index）
-
-工厂函数:
-  build_sparse_backbone(name, nfeat, nhid, nclass, dropout)
-  build_pyg_backbone(name, nfeat, nhid, nclass, dropout)
-
-UQ 模型:
-  CaGCN        — 图卷积温度缩放（GCNSparse 接口）
-  CaGCNFlex    — 支持任意 sparse backbone 的 CaGCN
-  GATS         — Graph Attention Temperature Scaling
-  GPNModel     — Graph Posterior Network
-  GraphANTNode — G-ΔUQ 随机锚点模型
+六种 GNN-UQ 模型：
+  GCNSparse   — 稀疏矩阵 GCN（CaGCN / CalGNN base）
+  GCNPyG      — PyG GCNConv（GATS base / GDUQ base）
+  GATModel    — PyG GATConv
+  GATS        — Graph Attention Temperature Scaling
+  GPNModel    — Graph Posterior Network
+  GraphANTNode— G-ΔUQ 随机锚点模型
+  CaGCN       — 图卷积温度缩放校准
 """
 
 import math
@@ -35,61 +23,7 @@ from torch.optim import Adam
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 0. 工厂函数
-# ════════════════════════════════════════════════════════════════════════════
-
-def build_sparse_backbone(name: str, nfeat: int, nhid: int, nclass: int,
-                           dropout: float = 0.5) -> nn.Module:
-    """
-    返回稀疏adj/edge_index 双接口的 backbone。
-    forward(x, adj_or_ei) 均可调用。
-    name: 'GCN' | 'GAT' | 'GraphSAGE'
-    """
-    name = name.upper()
-    if name == 'GCN':
-        return GCNSparse(nfeat, nhid, nclass, dropout)
-    elif name == 'GAT':
-        return GATSparse(nfeat, nhid, nclass, dropout)
-    elif name in ('GRAPHSAGE', 'SAGE'):
-        return SAGESparse(nfeat, nhid, nclass, dropout)
-    else:
-        raise ValueError(f'Unknown sparse backbone: {name}. Choose GCN / GAT / GraphSAGE')
-
-
-def build_pyg_backbone(name: str, nfeat: int, nhid: int, nclass: int,
-                        dropout: float = 0.5) -> nn.Module:
-    """
-    返回 PyG edge_index 接口的 backbone。
-    forward(x, edge_index) 调用。
-    name: 'GCN' | 'GAT' | 'GraphSAGE'
-    """
-    name = name.upper()
-    if name == 'GCN':
-        return GCNPyG(nfeat, nhid, nclass, dropout)
-    elif name == 'GAT':
-        return GATModel(nfeat, nhid, nclass, dropout)
-    elif name in ('GRAPHSAGE', 'SAGE'):
-        return SAGEModel(nfeat, nhid, nclass, dropout)
-    else:
-        raise ValueError(f'Unknown PyG backbone: {name}. Choose GCN / GAT / GraphSAGE')
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# 内部工具
-# ════════════════════════════════════════════════════════════════════════════
-
-def _to_edge_index(adj_or_ei: torch.Tensor) -> torch.Tensor:
-    """将 sparse_adj 或 edge_index 统一转成 edge_index (2,E)。"""
-    if adj_or_ei.is_sparse:
-        return adj_or_ei.coalesce().indices()
-    elif adj_or_ei.dtype == torch.long and adj_or_ei.dim() == 2 and adj_or_ei.shape[0] == 2:
-        return adj_or_ei
-    else:
-        raise TypeError(f'Cannot convert tensor shape={adj_or_ei.shape} dtype={adj_or_ei.dtype}')
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# 1. GCN Sparse（原有，保持不变）
+# 1. GCN (稀疏 adj，用于 CaGCN / CalGNN)
 # ════════════════════════════════════════════════════════════════════════════
 
 class GraphConvolution(nn.Module):
@@ -122,7 +56,7 @@ class GCNSparse(nn.Module):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 2. PyG edge_index 接口 backbone
+# 2. GCN / GAT (PyG edge_index，用于 GATS / GDUQ base)
 # ════════════════════════════════════════════════════════════════════════════
 
 class GCNPyG(nn.Module):
@@ -162,73 +96,15 @@ class GATModel(nn.Module):
         return self.conv2(x, edge_index)
 
 
-class SAGEModel(nn.Module):
-    """双层 PyG SAGEConv"""
-    def __init__(self, nfeat, nhid, nclass, dropout=0.5, aggr='mean'):
-        super().__init__()
-        from torch_geometric.nn import SAGEConv
-        self.conv1 = SAGEConv(nfeat, nhid, aggr=aggr)
-        self.conv2 = SAGEConv(nhid,  nclass, aggr=aggr)
-        self.dp    = dropout
-
-    def reset_parameters(self):
-        self.conv1.reset_parameters(); self.conv2.reset_parameters()
-
-    def forward(self, x, edge_index):
-        x = F.relu(self.conv1(x, edge_index))
-        x = F.dropout(x, self.dp, self.training)
-        return self.conv2(x, edge_index)
-
-
 # ════════════════════════════════════════════════════════════════════════════
-# 3. Sparse 接口包装器（GAT/SAGE，兼容 GCNSparse 调用方式）
-# ════════════════════════════════════════════════════════════════════════════
-
-class GATSparse(nn.Module):
-    """GAT backbone，forward(x, adj_or_ei) 接口兼容 GCNSparse。"""
-    def __init__(self, nfeat, nhid, nclass, dropout=0.5, heads=8):
-        super().__init__()
-        from torch_geometric.nn import GATConv
-        self.conv1 = GATConv(nfeat, nhid, heads=heads, dropout=dropout, concat=True)
-        self.conv2 = GATConv(nhid * heads, nclass, heads=1, dropout=dropout, concat=False)
-        self.dp    = dropout
-
-    def reset_parameters(self):
-        self.conv1.reset_parameters(); self.conv2.reset_parameters()
-
-    def forward(self, x, adj_or_ei):
-        ei = _to_edge_index(adj_or_ei)
-        x  = F.dropout(x, self.dp, self.training)
-        x  = F.elu(self.conv1(x, ei))
-        x  = F.dropout(x, self.dp, self.training)
-        return self.conv2(x, ei)
-
-
-class SAGESparse(nn.Module):
-    """GraphSAGE backbone，forward(x, adj_or_ei) 接口兼容 GCNSparse。"""
-    def __init__(self, nfeat, nhid, nclass, dropout=0.5, aggr='mean'):
-        super().__init__()
-        from torch_geometric.nn import SAGEConv
-        self.conv1 = SAGEConv(nfeat, nhid, aggr=aggr)
-        self.conv2 = SAGEConv(nhid,  nclass, aggr=aggr)
-        self.dp    = dropout
-
-    def reset_parameters(self):
-        self.conv1.reset_parameters(); self.conv2.reset_parameters()
-
-    def forward(self, x, adj_or_ei):
-        ei = _to_edge_index(adj_or_ei)
-        x  = F.relu(self.conv1(x, ei))
-        x  = F.dropout(x, self.dp, self.training)
-        return self.conv2(x, ei)
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# 4. CaGCN
+# 3. CaGCN（图卷积温度缩放）
 # ════════════════════════════════════════════════════════════════════════════
 
 class CaGCN(nn.Module):
-    """原始 CaGCN，仅支持 GCNSparse base（稀疏 adj GraphConvolution）。"""
+    """
+    CaGCN: 两层图卷积学习 per-node 温度 T(v)，base 权重冻结。
+    输出 logits * T(v)
+    """
     def __init__(self, nclass, base_model):
         super().__init__()
         self.base = base_model
@@ -243,39 +119,20 @@ class CaGCN(nn.Module):
         return logits * t
 
 
-class CaGCNFlex(nn.Module):
-    """
-    CaGCN 灵活版：支持 GCN / GAT / GraphSAGE backbone。
-    温度网络固定用 GCNConv（与 backbone 解耦）。
-    base_model 应为 build_sparse_backbone() 返回的模型。
-    """
-    def __init__(self, nclass, base_model):
-        super().__init__()
-        from torch_geometric.nn import GCNConv
-        self.base = base_model
-        self.s1 = GCNConv(nclass, 16)
-        self.s2 = GCNConv(16, 1)
-        for p in self.base.parameters():
-            p.requires_grad = False
-
-    def forward(self, x, adj_or_ei):
-        logits = self.base(x, adj_or_ei)
-        ei = _to_edge_index(adj_or_ei)
-        t  = torch.log(torch.exp(self.s2(F.relu(self.s1(logits, ei)), ei)) + 1.1)
-        return logits * t
-
-
 # ════════════════════════════════════════════════════════════════════════════
-# 5. GATS
+# 4. GATS（Graph Attention Temperature Scaling）
 # ════════════════════════════════════════════════════════════════════════════
 
 class CalibAttentionLayer(torch.nn.Module):
+    """拓扑感知的 per-node 温度层（GATS 核心）"""
     def __init__(self, in_channels, edge_index, num_nodes, dist_to_train,
                  heads=8, negative_slope=0.2, bias=1.0):
         super().__init__()
+        from torch_geometric.nn.conv import MessagePassing
         from torch_geometric.nn.dense.linear import Linear as PyGLinear
-        from torch_geometric.utils import remove_self_loops, add_self_loops
+        from torch_geometric.utils import remove_self_loops, add_self_loops, degree
 
+        self._MP = MessagePassing
         self.in_channels    = in_channels
         self.heads          = heads
         self.negative_slope = negative_slope
@@ -288,6 +145,7 @@ class CalibAttentionLayer(torch.nn.Module):
         self.dist1_a   = Parameter(torch.ones(1))
         self.register_buffer('dist_to_train', dist_to_train)
 
+        # 加自环
         ei, _ = remove_self_loops(self.edge_index, None)
         self.edge_index, _ = add_self_loops(ei, None, fill_value='mean',
                                             num_nodes=num_nodes)
@@ -297,6 +155,8 @@ class CalibAttentionLayer(torch.nn.Module):
         self._degree  = pyg_degree
 
     def forward(self, x):
+        from torch_geometric.nn.conv import MessagePassing
+
         N, H   = self.num_nodes, self.heads
         xn     = x - x.min(1, keepdim=True)[0]
         denom  = (x.max(1, keepdim=True)[0] - x.min(1, keepdim=True)[0]).clamp(min=1e-8)
@@ -305,22 +165,24 @@ class CalibAttentionLayer(torch.nn.Module):
         a_clus = torch.ones(N, dtype=torch.float32, device=x.device)
         a_clus[self.dist_to_train == 0] = self.train_a
         a_clus[self.dist_to_train == 1] = self.dist1_a
-        conf    = F.softmax(x, dim=1).amax(-1)
-        deg     = self._degree(self.edge_index[0], N)
+        conf   = F.softmax(x, dim=1).amax(-1)
+        deg    = self._degree(self.edge_index[0], N)
         deg_inv = (1. / deg).clamp(max=1e9)
         deg_inv[deg_inv == float('inf')] = 0.
 
+        # 手动 message passing
         src, dst = self.edge_index
         temp_src = temp.view(N, H) * a_clus.unsqueeze(-1)
         alpha_x  = x / a_clus.unsqueeze(-1).clamp(min=1e-8)
 
+        # alpha = leaky_relu((alpha_src * alpha_dst).sum(-1))
         alpha = (alpha_x[src] * alpha_x[dst]).sum(-1)
         alpha = F.leaky_relu(alpha, self.negative_slope)
         alpha = self._softmax(alpha, dst, num_nodes=N)
 
         msg_temp = temp_src[src] * alpha.unsqueeze(-1).expand(-1, H)
         msg_conf = (conf[dst] - conf[src]).unsqueeze(-1)
-        msg      = torch.cat([msg_temp, msg_conf], dim=-1)
+        msg      = torch.cat([msg_temp, msg_conf], dim=-1)   # (E, H+1)
 
         out = torch.zeros(N, H + 1, device=x.device)
         out.scatter_add_(0, dst.unsqueeze(-1).expand(-1, H + 1), msg)
@@ -334,7 +196,7 @@ class CalibAttentionLayer(torch.nn.Module):
 class GATS(nn.Module):
     """
     GATS: base 模型冻结，CalibAttentionLayer 学习 per-node 温度。
-    base 可以是 GCNPyG / GATModel / SAGEModel。
+    forward 返回校准后 logits。
     """
     def __init__(self, base_model, edge_index, num_nodes, dist_to_train,
                  nclass, heads=8, bias=1.0):
@@ -354,6 +216,7 @@ class GATS(nn.Module):
 
 
 def bfs_distance(edge_index, train_mask, max_hop, N, device):
+    """BFS 计算每个节点到训练集的最近距离（≤max_hop）"""
     dist = torch.full((N,), max_hop, dtype=torch.long, device=device)
     dist[train_mask] = 0
     src, dst = edge_index[0], edge_index[1]
@@ -364,7 +227,7 @@ def bfs_distance(edge_index, train_mask, max_hop, N, device):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 6. GPN
+# 5. GPN（Graph Posterior Network）
 # ════════════════════════════════════════════════════════════════════════════
 
 class RadialTransform(nn.Module):
@@ -414,6 +277,8 @@ class PerClassRadialFlow(nn.Module):
             for radial in self.flows[c]:
                 zc, ld = radial(zc); ld_sum += ld
             diff = zc - self.mu[c].unsqueeze(0)
+            log_pz = -0.5 * (self.num_classes * math.log(2 * math.pi) + (diff * diff).sum(-1))
+            # use dim not num_classes
             log_pz = -0.5 * (self.flows[0][0].dim * math.log(2 * math.pi) + (diff * diff).sum(-1))
             log_q[:, c] = log_pz + ld_sum
         return log_q
@@ -501,56 +366,31 @@ def gpn_ce_loss(log_soft, y):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 7. G-ΔUQ (GraphANTNode)
+# 6. G-ΔUQ (GraphANTNode)
 # ════════════════════════════════════════════════════════════════════════════
 
 class GCNEncoder(nn.Module):
-    """G-ΔUQ 内部 encoder，支持 GCN / GAT / GraphSAGE backbone。"""
-    def __init__(self, in_dim, dim_hidden, num_layers, dropout=0.5, backbone='GCN'):
+    def __init__(self, in_dim, dim_hidden, num_layers, dropout=0.5):
         super().__init__()
-        from torch_geometric.nn import GCNConv, GATConv, SAGEConv
-        backbone = backbone.upper()
+        from torch_geometric.nn import GCNConv
         dims = [in_dim] + [dim_hidden] * num_layers
-
-        if backbone == 'GCN':
-            self.convs = nn.ModuleList([GCNConv(dims[i], dims[i+1]) for i in range(num_layers)])
-        elif backbone == 'GAT':
-            heads = 4
-            self.convs = nn.ModuleList()
-            for i in range(num_layers):
-                if i < num_layers - 1:
-                    self.convs.append(GATConv(dims[i], dim_hidden // heads, heads=heads,
-                                              dropout=dropout, concat=True))
-                else:
-                    self.convs.append(GATConv(dim_hidden, dim_hidden, heads=1,
-                                              dropout=dropout, concat=False))
-        elif backbone in ('GRAPHSAGE', 'SAGE'):
-            self.convs = nn.ModuleList([SAGEConv(dims[i], dims[i+1]) for i in range(num_layers)])
-        else:
-            raise ValueError(f'Unknown backbone for GCNEncoder: {backbone}')
-
-        self.bns  = nn.ModuleList([nn.BatchNorm1d(dim_hidden) for _ in range(num_layers)])
-        self.drop = dropout
-        self._backbone = backbone
+        self.convs = nn.ModuleList([GCNConv(dims[i], dims[i+1]) for i in range(num_layers)])
+        self.bns   = nn.ModuleList([nn.BatchNorm1d(dims[i+1]) for i in range(num_layers)])
+        self.drop  = dropout
 
     def forward(self, x, edge_index, edge_weight=None):
         h = x
         for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
-            if self._backbone == 'GCN' and edge_weight is not None:
-                h = bn(conv(h, edge_index, edge_weight))
-            else:
-                h = bn(conv(h, edge_index))
-            if i < len(self.convs) - 1:
-                h = F.relu(h)
+            h = bn(conv(h, edge_index, edge_weight))
+            if i < len(self.convs) - 1: h = F.relu(h)
             h = F.dropout(h, self.drop, training=self.training)
         return h
 
 
 class BaseModelNode(nn.Module):
-    def __init__(self, in_dim, dim_hidden, num_classes, num_layers, dropout=0.5,
-                 backbone='GCN'):
+    def __init__(self, in_dim, dim_hidden, num_classes, num_layers, dropout=0.5):
         super().__init__()
-        self.encoder    = GCNEncoder(in_dim, dim_hidden, num_layers, dropout, backbone)
+        self.encoder    = GCNEncoder(in_dim, dim_hidden, num_layers, dropout)
         self.classifier = nn.Linear(dim_hidden, num_classes)
 
     def forward_graph(self, x, edge_index, edge_weight=None):
@@ -558,7 +398,10 @@ class BaseModelNode(nn.Module):
 
 
 class GraphANTNode(nn.Module):
-    """G-ΔUQ 随机锚点模型。"""
+    """
+    G-ΔUQ 随机锚点模型。
+    训练：单锚点前向；推理：n_anchors 锚点的 std 作为不确定性。
+    """
     def __init__(self, base_net, mu, std, anchor_type='node', num_classes=2):
         super().__init__()
         self.net         = base_net
@@ -594,5 +437,5 @@ class GraphANTNode(nn.Module):
         c       = sig_std.mean(-1, keepdim=True).expand_as(mu_log)
         mu_cal  = mu_log / (1 + torch.exp(c))
         probs   = F.softmax(mu_cal, dim=1).cpu().numpy()
-        std_np  = sig_std.mean(-1).cpu().numpy()
+        std_np  = sig_std.mean(-1).cpu().numpy()   # (N,) scalar uncertainty
         return probs, std_np
