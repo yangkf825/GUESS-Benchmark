@@ -1,7 +1,6 @@
 <img width="2172" height="724" alt="image" src="https://github.com/user-attachments/assets/21976eac-32ff-4617-aa3e-bdb915c509c4" />
 
 
-
 # GUESS-Bench
 
 > **GUESS-Bench: Benchmarking Uncertainty Estimation in GNNs Under Distribution Shifts**
@@ -24,7 +23,6 @@ A comprehensive benchmark for GNN Uncertainty EStimation under distribution Shif
 | **CaGCN** | Calibration | $1-\max(p)$ after graph-conv temperature scaling | Wang et al., NeurIPS 2021 |
 | **GATS** | Calibration | $1-\max(p)$ after attention temperature scaling | Hsu et al., 2022 |
 | **RBS**  | Calibration | $1-\max(p)$ after reliability-based bin scaling | Liu et al., 2022 |
-> **Note:** GPN employs its own normalizing flow encoder together with APPNP propagation, and is structurally independent of GCN/GAT/GraphSAGE backbones; therefore, it does not support the --backbone argument.
 ### Conformal Prediction Methods
 
 | Algorithm | Score Type | Reference |
@@ -33,19 +31,6 @@ A comprehensive benchmark for GNN Uncertainty EStimation under distribution Shif
 | **NAPS** | Degree-weighted APS quantile | Clarkson, 2023 |
 | **CF-GNN** | ConfGNN topology-aware correction + APS | Huang et al., NeurIPS 2023 |
 
----
----
- 
-## Supported Backbones
-
-| Backbone | Sparse adj path<br>(Elliptic / Arxiv / EERM) | PyG edge_index path<br>(Facebook / Twitch) |
-|----------|---------------------------------------------|--------------------------------------------|
-| **GCN** | `GCNSparse` | `GCNPyG` |
-| **GAT** | `GATSparse` | `GATModel` |
-| **GraphSAGE** | `SAGESparse` | `SAGEModel` |
-
-All backbones can be switched via the unified argument `--backbone GCN / GAT / GraphSAGE` (default: `GCN`), and are **fully backward compatible with existing code**.
- 
 ---
 
 ## Supported Datasets
@@ -99,35 +84,18 @@ numpy, scipy, scikit-learn, pandas, matplotlib, seaborn
  
 ```bash
 # ── Elliptic / Arxiv / EERM ──────────────────────────────────────────────
-# Usage: bash experiments/run_all.sh <dataset> <data_path> <runs> <backbone> [eerm_ds]
+# Usage: bash experiments/run_all.sh <dataset> <data_path> <runs> [eerm_ds]
  
-# GCN backbone(default)
-bash experiments/run_all.sh elliptic ./data/elliptic 5 GCN
-bash experiments/run_all.sh arxiv    ./data/arxiv/data.pkl 5 GCN
-bash experiments/run_all.sh eerm     ./data/eerm/Planetoid/cora 5 GCN cora
-bash experiments/run_all.sh eerm     ./data/eerm/Amazon/Photo   5 GCN amazon
- 
-# GAT backbone
-bash experiments/run_all.sh elliptic ./data/elliptic 5 GAT
-bash experiments/run_all.sh arxiv    ./data/arxiv/data.pkl 5 GAT
-bash experiments/run_all.sh eerm     ./data/eerm/Planetoid/cora 5 GAT cora
-bash experiments/run_all.sh eerm     ./data/eerm/Amazon/Photo   5 GAT amazon
- 
-# GraphSAGE backbone
-bash experiments/run_all.sh elliptic ./data/elliptic 5 GraphSAGE
-bash experiments/run_all.sh arxiv    ./data/arxiv/data.pkl 5 GraphSAGE
-bash experiments/run_all.sh eerm     ./data/eerm/Planetoid/cora 5 GraphSAGE cora
-bash experiments/run_all.sh eerm     ./data/eerm/Amazon/Photo   5 GraphSAGE amazon
+bash experiments/run_all.sh elliptic ./data/elliptic 5
+bash experiments/run_all.sh arxiv    ./data/arxiv/data.pkl 5
+bash experiments/run_all.sh eerm     ./data/eerm/Planetoid/cora 5 cora
+bash experiments/run_all.sh eerm     ./data/eerm/Amazon/Photo   5 amazon
  
 # ── Facebook100 / Twitch ─────────────────────────────────────────────────
-# Usage: bash experiments/run_all_fb_twitch.sh <dataset> <data_root> <runs> <backbone>
+# Usage: bash experiments/run_all_fb_twitch.sh <dataset> <data_root> <runs>
  
-bash experiments/run_all_fb_twitch.sh twitch   ./data 5 GCN
-bash experiments/run_all_fb_twitch.sh twitch   ./data 5 GAT
-bash experiments/run_all_fb_twitch.sh twitch   ./data 5 GraphSAGE
-bash experiments/run_all_fb_twitch.sh facebook ./data 3 GCN
-bash experiments/run_all_fb_twitch.sh facebook ./data 3 GAT
-bash experiments/run_all_fb_twitch.sh facebook ./data 3 GraphSAGE
+bash experiments/run_all_fb_twitch.sh twitch   ./data 5
+bash experiments/run_all_fb_twitch.sh facebook ./data 3
 
 # Conformal prediction methods (sweep over alpha)
 for alpha in 0.01 0.05 0.10 0.15 0.20 0.25; do
@@ -150,36 +118,24 @@ python experiments/run_confgnn_elliptic.py --data_dir ./data/elliptic \
  
 ## Per-Method Commands (Elliptic / Arxiv / EERM)
 
-All scripts under the sparse adjacency path support `--backbone GCN / GAT / GraphSAGE` (default: `GCN`).
+The following commands run the original main experiment scripts.
  
 ### S-BGCN-T-K（`run_ungnn.py`）
  
 ```bash
 # Elliptic
 python experiments/run_ungnn.py --dataset elliptic --data_dir ./data/elliptic --runs 5
-python experiments/run_ungnn.py --dataset elliptic --data_dir ./data/elliptic --backbone GAT --runs 5
-python experiments/run_ungnn.py --dataset elliptic --data_dir ./data/elliptic --backbone GraphSAGE --runs 5
  
 # OGB-Arxiv
 python experiments/run_ungnn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --runs 5
-python experiments/run_ungnn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GAT --runs 5
-python experiments/run_ungnn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GraphSAGE --runs 5
  
 # EERM-Cora
 python experiments/run_ungnn.py --dataset eerm --eerm_dataset cora \
     --eerm_root ./data/eerm/Planetoid/cora --runs 5
-python experiments/run_ungnn.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GAT --runs 5
-python experiments/run_ungnn.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GraphSAGE --runs 5
  
 # EERM-Amazon
 python experiments/run_ungnn.py --dataset eerm --eerm_dataset amazon \
     --eerm_root ./data/eerm/Amazon/Photo --runs 5
-python experiments/run_ungnn.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --backbone GAT --runs 5
-python experiments/run_ungnn.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --backbone GraphSAGE --runs 5
 ```
  
 ### GATS（`run_gats.py`）
@@ -187,27 +143,17 @@ python experiments/run_ungnn.py --dataset eerm --eerm_dataset amazon \
 ```bash
 # Elliptic
 python experiments/run_gats.py --dataset elliptic --data_dir ./data/elliptic --runs 5
-python experiments/run_gats.py --dataset elliptic --data_dir ./data/elliptic --backbone GAT --runs 5
-python experiments/run_gats.py --dataset elliptic --data_dir ./data/elliptic --backbone GraphSAGE --runs 5
  
 # OGB-Arxiv
 python experiments/run_gats.py --dataset arxiv --data_path ./data/arxiv/data.pkl --runs 5
-python experiments/run_gats.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GAT --runs 5
-python experiments/run_gats.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GraphSAGE --runs 5
  
 # EERM-Cora
 python experiments/run_gats.py --dataset eerm --eerm_dataset cora \
     --eerm_root ./data/eerm/Planetoid/cora --runs 5
-python experiments/run_gats.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GAT --runs 5
-python experiments/run_gats.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GraphSAGE --runs 5
  
 # EERM-Amazon
 python experiments/run_gats.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GAT
-python experiments/run_gats.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GraphSAGE
+    --eerm_root ./data/eerm/Amazon/Photo --runs 5
 ```
  
 ### CaGCN（`run_cagcn.py`）
@@ -215,27 +161,17 @@ python experiments/run_gats.py --dataset eerm --eerm_dataset amazon \
 ```bash
 # Elliptic
 python experiments/run_cagcn.py --dataset elliptic --data_dir ./data/elliptic --runs 5
-python experiments/run_cagcn.py --dataset elliptic --data_dir ./data/elliptic --backbone GAT --runs 5
-python experiments/run_cagcn.py --dataset elliptic --data_dir ./data/elliptic --backbone GraphSAGE --runs 5
  
 # OGB-Arxiv
 python experiments/run_cagcn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --runs 5
-python experiments/run_cagcn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GAT --runs 5
-python experiments/run_cagcn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GraphSAGE --runs 5
  
 # EERM-Cora
 python experiments/run_cagcn.py --dataset eerm --eerm_dataset cora \
     --eerm_root ./data/eerm/Planetoid/cora --runs 5
-python experiments/run_cagcn.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GAT --runs 5
-python experiments/run_cagcn.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GraphSAGE --runs 5
  
 # EERM-Amazon
 python experiments/run_cagcn.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GAT
-python experiments/run_cagcn.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GraphSAGE
+    --eerm_root ./data/eerm/Amazon/Photo --runs 5
 ```
  
 ### RBS（`run_calgnn.py`）
@@ -243,27 +179,17 @@ python experiments/run_cagcn.py --dataset eerm --eerm_dataset amazon \
 ```bash
 # Elliptic
 python experiments/run_calgnn.py --dataset elliptic --data_dir ./data/elliptic --runs 5
-python experiments/run_calgnn.py --dataset elliptic --data_dir ./data/elliptic --backbone GAT --runs 5
-python experiments/run_calgnn.py --dataset elliptic --data_dir ./data/elliptic --backbone GraphSAGE --runs 5
  
 # OGB-Arxiv
 python experiments/run_calgnn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --runs 5
-python experiments/run_calgnn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GAT --runs 5
-python experiments/run_calgnn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GraphSAGE --runs 5
  
 # EERM-Cora
 python experiments/run_calgnn.py --dataset eerm --eerm_dataset cora \
     --eerm_root ./data/eerm/Planetoid/cora --runs 5
-python experiments/run_calgnn.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GAT --runs 5
-python experiments/run_calgnn.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GraphSAGE --runs 5
  
 # EERM-Amazon
 python experiments/run_calgnn.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GAT
-python experiments/run_calgnn.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GraphSAGE
+    --eerm_root ./data/eerm/Amazon/Photo --runs 5
 ```
  
 ### G-ΔUQ（`run_gduq.py`）
@@ -271,33 +197,22 @@ python experiments/run_calgnn.py --dataset eerm --eerm_dataset amazon \
 ```bash
 # Elliptic
 python experiments/run_gduq.py --dataset elliptic --data_dir ./data/elliptic --runs 5
-python experiments/run_gduq.py --dataset elliptic --data_dir ./data/elliptic --backbone GAT --runs 5
-python experiments/run_gduq.py --dataset elliptic --data_dir ./data/elliptic --backbone GraphSAGE --runs 5
  
 # OGB-Arxiv
 python experiments/run_gduq.py --dataset arxiv --data_path ./data/arxiv/data.pkl --runs 5
-python experiments/run_gduq.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GAT --runs 5
-python experiments/run_gduq.py --dataset arxiv --data_path ./data/arxiv/data.pkl --backbone GraphSAGE --runs 5
  
 # EERM-Cora
 python experiments/run_gduq.py --dataset eerm --eerm_dataset cora \
     --eerm_root ./data/eerm/Planetoid/cora --runs 5
-python experiments/run_gduq.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GAT --runs 5
-python experiments/run_gduq.py --dataset eerm --eerm_dataset cora \
-    --eerm_root ./data/eerm/Planetoid/cora --backbone GraphSAGE --runs 5
  
 # EERM-Amazon
 python experiments/run_gduq.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GAT
-python experiments/run_gduq.py --dataset eerm --eerm_dataset amazon \
-    --eerm_root ./data/eerm/Amazon/Photo --runs 5 --backbone GraphSAGE
+    --eerm_root ./data/eerm/Amazon/Photo --runs 5
 ```
  
-### GPN (`run_gpn.py`) — No Backbone Parameters
+### GPN (`run_gpn.py`)
 
 ```bash
-# GPN uses a normalizing flow encoder and does not rely on GCN/GAT/GNN backbones
 python experiments/run_gpn.py --dataset elliptic --data_dir ./data/elliptic --runs 5
 python experiments/run_gpn.py --dataset arxiv --data_path ./data/arxiv/data.pkl --runs 5
 python experiments/run_gpn.py --dataset eerm --eerm_dataset cora \
@@ -310,64 +225,44 @@ python experiments/run_gpn.py --dataset eerm --eerm_dataset amazon \
  
 ## Per-Algorithm Commands (Facebook100 / Twitch)
 
-All `_fb_twitch` scripts support `--backbone GCN / GAT / GraphSAGE` (default: `GCN`).
+The following commands run the original cross-domain experiment scripts.
  
 ### S-BGCN-T-K（`run_ungnn_fb_twitch.py`）
  
 ```bash
 python experiments/run_ungnn_fb_twitch.py --dataset twitch   --data_root ./data --runs 5
-python experiments/run_ungnn_fb_twitch.py --dataset twitch   --data_root ./data --backbone GAT --runs 5
-python experiments/run_ungnn_fb_twitch.py --dataset twitch   --data_root ./data --backbone GraphSAGE --runs 5
 python experiments/run_ungnn_fb_twitch.py --dataset facebook --data_root ./data --runs 3
-python experiments/run_ungnn_fb_twitch.py --dataset facebook --data_root ./data --backbone GAT --runs 3
-python experiments/run_ungnn_fb_twitch.py --dataset facebook --data_root ./data --backbone GraphSAGE --runs 3
 ```
  
 ### GATS（`run_gats_fb_twitch.py`）
  
 ```bash
 python experiments/run_gats_fb_twitch.py --dataset twitch   --data_root ./data --runs 5
-python experiments/run_gats_fb_twitch.py --dataset twitch   --data_root ./data --backbone GAT --runs 5
-python experiments/run_gats_fb_twitch.py --dataset twitch   --data_root ./data --backbone GraphSAGE --runs 5
 python experiments/run_gats_fb_twitch.py --dataset facebook --data_root ./data --runs 3
-python experiments/run_gats_fb_twitch.py --dataset facebook --data_root ./data --backbone GAT --runs 3
-python experiments/run_gats_fb_twitch.py --dataset facebook --data_root ./data --backbone GraphSAGE --runs 3
 ```
  
 ### CaGCN（`run_cagcn_fb_twitch.py`）
  
 ```bash
 python experiments/run_cagcn_fb_twitch.py --dataset twitch   --data_root ./data --runs 5
-python experiments/run_cagcn_fb_twitch.py --dataset twitch   --data_root ./data --backbone GAT --runs 5
-python experiments/run_cagcn_fb_twitch.py --dataset twitch   --data_root ./data --backbone GraphSAGE --runs 5
 python experiments/run_cagcn_fb_twitch.py --dataset facebook --data_root ./data --runs 3
-python experiments/run_cagcn_fb_twitch.py --dataset facebook --data_root ./data --backbone GAT --runs 3
-python experiments/run_cagcn_fb_twitch.py --dataset facebook --data_root ./data --backbone GraphSAGE --runs 3
 ```
  
 ### RBS（`run_calgnn_fb_twitch.py`）
  
 ```bash
 python experiments/run_calgnn_fb_twitch.py --dataset twitch   --data_root ./data --runs 5
-python experiments/run_calgnn_fb_twitch.py --dataset twitch   --data_root ./data --backbone GAT --runs 5
-python experiments/run_calgnn_fb_twitch.py --dataset twitch   --data_root ./data --backbone GraphSAGE --runs 5
 python experiments/run_calgnn_fb_twitch.py --dataset facebook --data_root ./data --runs 3
-python experiments/run_calgnn_fb_twitch.py --dataset facebook --data_root ./data --backbone GAT --runs 3
-python experiments/run_calgnn_fb_twitch.py --dataset facebook --data_root ./data --backbone GraphSAGE --runs 3
 ```
  
 ### G-ΔUQ（`run_gduq_fb_twitch.py`）
  
 ```bash
 python experiments/run_gduq_fb_twitch.py --dataset twitch   --data_root ./data --runs 5
-python experiments/run_gduq_fb_twitch.py --dataset twitch   --data_root ./data --backbone GAT --runs 5
-python experiments/run_gduq_fb_twitch.py --dataset twitch   --data_root ./data --backbone GraphSAGE --runs 5
 python experiments/run_gduq_fb_twitch.py --dataset facebook --data_root ./data --runs 3
-python experiments/run_gduq_fb_twitch.py --dataset facebook --data_root ./data --backbone GAT --runs 3
-python experiments/run_gduq_fb_twitch.py --dataset facebook --data_root ./data --backbone GraphSAGE --runs 3
 ```
  
-### GPN (`run_gpn_fb_twitch.py`) — No Backbone Parameters
+### GPN (`run_gpn_fb_twitch.py`)
  
 ```bash
 python experiments/run_gpn_fb_twitch.py --dataset twitch   --data_root ./data --runs 3
@@ -397,20 +292,20 @@ graphuq-bench/
 │       ├── metrics.py              # RQ1/RQ2/RQ3 full metrics + RBS summary
 │       ├── datasets.py             # Elliptic / OGB-Arxiv / EERM loaders
 │       ├── datasets_fb_twitch.py   # Facebook100 / Twitch loaders
-│       ├── models.py               # 6 models + GCN/GAT/SAGE backbone factory
+│       ├── models.py               # model definitions used by the original scripts
 │       └── calibration.py          # TS / HB / Iso / BBQ / MetaCal / RBS
 │
 ├── experiments/
 │   ├── run_ungnn.py                ┐
 │   ├── run_gats.py                 │
 │   ├── run_gpn.py                  │ Elliptic / Arxiv / EERM
-│   ├── run_gduq.py                 │ Supports `--backbone` (except GPN)
+│   ├── run_gduq.py                 │
 │   ├── run_calgnn.py               │
 │   ├── run_cagcn.py                ┘
 │   ├── run_ungnn_fb_twitch.py      ┐
 │   ├── run_gats_fb_twitch.py       │
 │   ├── run_gpn_fb_twitch.py        │ Facebook100 / Twitch
-│   ├── run_gduq_fb_twitch.py       │ Supports `--backbone` (except GPN)
+│   ├── run_gduq_fb_twitch.py       │
 │   ├── run_calgnn_fb_twitch.py     │
 │   ├── run_cagcn_fb_twitch.py      ┘
 │   ├── run_all.sh                  
@@ -424,12 +319,13 @@ graphuq-bench/
 ├── .gitignore
 └── README.md
 ```
+
  
 ---
  
 ## Output Format
 
-Each experiment script generates three CSV files under `results/<alg>/`, with backbone-specific naming (e.g., `elliptic_gat_ungnn_results.csv`):
+Each experiment script generates three CSV files under `results/<alg>/`:
 
 | File | Description |
 |------|-------------|
@@ -439,7 +335,6 @@ Each experiment script generates three CSV files under `results/<alg>/`, with ba
 
 CalGNN additionally outputs results per calibration method (file names include `_Uncal_`, `_RBS_`, etc.).
 
-> **Multi-backbone outputs do not overwrite each other**: results for GCN / GAT / GraphSAGE are distinguished using `_gcn_`, `_gat_`, and `_graphsage_` in filenames.
  
 ---
  
@@ -449,7 +344,6 @@ CalGNN additionally outputs results per calibration method (file names include `
 
 | Parameter | Default | Description |
 |----------|--------|-------------|
-| `--backbone` | `GCN` | GNN backbone: `GCN` / `GAT` / `GraphSAGE` (except GPN) |
 | `--runs` | 5 | Number of repeated runs |
 | `--base_seed` | 42 | Base random seed |
 | `--hidden` | 64 | Hidden dimension of GNN |
@@ -502,31 +396,7 @@ CalGNN additionally outputs results per calibration method (file names include `
 | `--num_bins_rbs` | 10 | Number of bins for RBS temperature calibration |
 | `--add_cal_loss` | `False` | Whether to include calibration regularization loss |
 
----
 
-## Backbone Design Notes
-
-### Sparse adjacency pipeline (Elliptic / Arxiv / EERM)
-
-`GATSparse` and `SAGESparse` internally convert `torch.sparse_coo_tensor` to `edge_index` via `_to_edge_index()`, making the interface fully transparent. Either sparse adjacency or `edge_index` can be used interchangeably at the upper level.
-
-```python
-# models.py factory functions
-from gnn_uq_bench.models import build_sparse_backbone, build_pyg_backbone
-
-# Sparse adjacency pipeline
-model = build_sparse_backbone('GAT', nfeat=128, nhid=64, nclass=2, dropout=0.5)
-logits = model(feat, adj)          # adj can be sparse_adj or edge_index
-
-# PyG edge_index pipeline
-model = build_pyg_backbone('GraphSAGE', nfeat=128, nhid=64, nclass=2, dropout=0.5)
-logits = model(feat, edge_index)
-```
- 
-### CaGCN Temperature Network
- 
-Regardless of backbone (GCN / GAT / GraphSAGE), CaGCN always uses a two-layer GCNConv temperature network (consistent with the original paper). This is implemented via the CaGCNFlex class, where the backbone encoder and temperature calibration network are fully decoupled.
- 
 ---
  
 ## .gitignore
@@ -562,4 +432,141 @@ dist/
 
 Apache 2.0
 
+---
 
+## Appendix: GAT / GraphSAGE Backbone Extension
+
+This section documents the additional GAT and GraphSAGE backbone variants.
+The original scripts above are kept unchanged. The new variants are isolated in newly created `*_gat_sage.py` runners and a dedicated model file, so the original GCN-based workflow remains available.
+
+### Added Model File
+
+```text
+src/gnn_uq_bench/model_gat_sage.py
+```
+
+The file provides GCN, GAT, and GraphSAGE backbone builders for both execution paths used in this benchmark:
+
+| Path | Datasets | Interface | Backbones |
+|------|----------|-----------|-----------|
+| Sparse adjacency path | Elliptic / OGB-Arxiv / EERM-Cora / EERM-Amazon | `forward(x, adj)` | GCN / GAT / GraphSAGE |
+| PyG `edge_index` path | Facebook100 / Twitch | `forward(x, edge_index)` | GCN / GAT / GraphSAGE |
+
+The new runners use `--model` instead of `--backbone`:
+
+```bash
+--model GCN
+--model GAT
+--model SAGE
+--model GraphSAGE
+```
+
+`SAGE` and `GraphSAGE` are treated as aliases. The default is kept as `GCN` unless a runner sets a different default internally.
+
+### Added Experiment Scripts
+
+```text
+experiments/run_ungnn_gat_sage.py
+experiments/run_gats_gat_sage.py
+experiments/run_cagcn_gat_sage.py
+experiments/run_calgnn_gat_sage.py
+experiments/run_gduq_gat_sage.py
+experiments/run_gpn_gat_sage.py
+experiments/run_graph_cp_gat_sage.py
+
+experiments/run_ungnn_fb_twitch_gat_sage.py
+experiments/run_gats_fb_twitch_gat_sage.py
+experiments/run_cagcn_fb_twitch_gat_sage.py
+experiments/run_calgnn_fb_twitch_gat_sage.py
+experiments/run_gduq_fb_twitch_gat_sage.py
+experiments/run_gpn_fb_twitch_gat_sage.py
+```
+
+### Backbone Extension Commands: Elliptic / Arxiv / EERM
+
+```bash
+# S-BGCN-T-K
+python experiments/run_ungnn_gat_sage.py --dataset elliptic --data_dir ./data/elliptic --model GAT --runs 5
+python experiments/run_ungnn_gat_sage.py --dataset arxiv --data_path ./data/arxiv/data.pkl --model GraphSAGE --runs 5
+python experiments/run_ungnn_gat_sage.py --dataset eerm --eerm_dataset cora --eerm_root ./data/eerm/Planetoid/cora --model GAT --runs 5
+python experiments/run_ungnn_gat_sage.py --dataset eerm --eerm_dataset amazon --eerm_root ./data/eerm/Amazon/Photo --model GraphSAGE --runs 5
+
+# GATS
+python experiments/run_gats_gat_sage.py --dataset elliptic --data_dir ./data/elliptic --model GAT --runs 5
+python experiments/run_gats_gat_sage.py --dataset arxiv --data_path ./data/arxiv/data.pkl --model GraphSAGE --runs 5
+python experiments/run_gats_gat_sage.py --dataset eerm --eerm_dataset cora --eerm_root ./data/eerm/Planetoid/cora --model GAT --runs 5
+python experiments/run_gats_gat_sage.py --dataset eerm --eerm_dataset amazon --eerm_root ./data/eerm/Amazon/Photo --model GraphSAGE --runs 5
+
+# CaGCN
+python experiments/run_cagcn_gat_sage.py --dataset elliptic --data_dir ./data/elliptic --model GAT --runs 5
+python experiments/run_cagcn_gat_sage.py --dataset arxiv --data_path ./data/arxiv/data.pkl --model GraphSAGE --runs 5
+python experiments/run_cagcn_gat_sage.py --dataset eerm --eerm_dataset cora --eerm_root ./data/eerm/Planetoid/cora --model GAT --runs 5
+python experiments/run_cagcn_gat_sage.py --dataset eerm --eerm_dataset amazon --eerm_root ./data/eerm/Amazon/Photo --model GraphSAGE --runs 5
+
+# RBS / CalGNN
+python experiments/run_calgnn_gat_sage.py --dataset elliptic --data_dir ./data/elliptic --model GAT --runs 5
+python experiments/run_calgnn_gat_sage.py --dataset arxiv --data_path ./data/arxiv/data.pkl --model GraphSAGE --runs 5
+python experiments/run_calgnn_gat_sage.py --dataset eerm --eerm_dataset cora --eerm_root ./data/eerm/Planetoid/cora --model GAT --runs 5
+python experiments/run_calgnn_gat_sage.py --dataset eerm --eerm_dataset amazon --eerm_root ./data/eerm/Amazon/Photo --model GraphSAGE --runs 5
+
+# G-ΔUQ
+python experiments/run_gduq_gat_sage.py --dataset elliptic --data_dir ./data/elliptic --model GAT --runs 5
+python experiments/run_gduq_gat_sage.py --dataset arxiv --data_path ./data/arxiv/data.pkl --model GraphSAGE --runs 5
+python experiments/run_gduq_gat_sage.py --dataset eerm --eerm_dataset cora --eerm_root ./data/eerm/Planetoid/cora --model GAT --runs 5
+python experiments/run_gduq_gat_sage.py --dataset eerm --eerm_dataset amazon --eerm_root ./data/eerm/Amazon/Photo --model GraphSAGE --runs 5
+
+# GPN backbone-extension runner
+python experiments/run_gpn_gat_sage.py --dataset elliptic --data_dir ./data/elliptic --model GAT --runs 5
+python experiments/run_gpn_gat_sage.py --dataset arxiv --data_path ./data/arxiv/data.pkl --model GraphSAGE --runs 5
+python experiments/run_gpn_gat_sage.py --dataset eerm --eerm_dataset cora --eerm_root ./data/eerm/Planetoid/cora --model GAT --runs 5
+python experiments/run_gpn_gat_sage.py --dataset eerm --eerm_dataset amazon --eerm_root ./data/eerm/Amazon/Photo --model GraphSAGE --runs 5
+
+# Graph-CP backbone-extension runner
+python experiments/run_graph_cp_gat_sage.py --dataset elliptic --data_dir ./data/elliptic --model GAT --runs 5
+python experiments/run_graph_cp_gat_sage.py --dataset arxiv --data_path ./data/arxiv/data.pkl --model GraphSAGE --runs 5
+python experiments/run_graph_cp_gat_sage.py --dataset eerm --eerm_dataset cora --eerm_root ./data/eerm/Planetoid/cora --model GAT --runs 5
+python experiments/run_graph_cp_gat_sage.py --dataset eerm --eerm_dataset amazon --eerm_root ./data/eerm/Amazon/Photo --model GraphSAGE --runs 5
+```
+
+### Backbone Extension Commands: Facebook100 / Twitch
+
+```bash
+# S-BGCN-T-K
+python experiments/run_ungnn_fb_twitch_gat_sage.py --dataset twitch --data_root ./data --model GAT --runs 5
+python experiments/run_ungnn_fb_twitch_gat_sage.py --dataset facebook --data_root ./data --model GraphSAGE --runs 3
+
+# GATS
+python experiments/run_gats_fb_twitch_gat_sage.py --dataset twitch --data_root ./data --model GAT --runs 5
+python experiments/run_gats_fb_twitch_gat_sage.py --dataset facebook --data_root ./data --model GraphSAGE --runs 3
+
+# CaGCN
+python experiments/run_cagcn_fb_twitch_gat_sage.py --dataset twitch --data_root ./data --model GAT --runs 5
+python experiments/run_cagcn_fb_twitch_gat_sage.py --dataset facebook --data_root ./data --model GraphSAGE --runs 3
+
+# RBS / CalGNN
+python experiments/run_calgnn_fb_twitch_gat_sage.py --dataset twitch --data_root ./data --model GAT --runs 5
+python experiments/run_calgnn_fb_twitch_gat_sage.py --dataset facebook --data_root ./data --model GraphSAGE --runs 3
+
+# G-ΔUQ
+python experiments/run_gduq_fb_twitch_gat_sage.py --dataset twitch --data_root ./data --model GAT --runs 5
+python experiments/run_gduq_fb_twitch_gat_sage.py --dataset facebook --data_root ./data --model GraphSAGE --runs 3
+
+# GPN backbone-extension runner
+python experiments/run_gpn_fb_twitch_gat_sage.py --dataset twitch --data_root ./data --model GAT --runs 3
+python experiments/run_gpn_fb_twitch_gat_sage.py --dataset facebook --data_root ./data --model GraphSAGE --runs 3
+```
+
+### Extension-Specific Parameters
+
+| Parameter | Default | Description |
+|----------|---------|-------------|
+| `--model` | `GCN` | Backbone used by the new `*_gat_sage.py` scripts. Options: `GCN`, `GAT`, `SAGE`, `GraphSAGE`. |
+| `--backbone_heads` | `8` | Number of attention heads used by the GAT backbone where applicable. |
+
+### Design Notes
+
+The new backbone extension is intentionally separated from the original files. This avoids changing the baseline GCN experiments and makes it possible to compare original results against GAT and GraphSAGE variants without modifying the original runners.
+
+CaGCN keeps its graph-convolution temperature network. The backbone encoder can be GCN, GAT, or GraphSAGE, but the calibration temperature network remains consistent with the CaGCN design.
+
+The GAT and GraphSAGE outputs use separate runner files and save paths, so they do not overwrite the original baseline outputs.
