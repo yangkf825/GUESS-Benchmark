@@ -10,6 +10,7 @@ G-ΔUQ — Facebook100 & Twitch（跨域 OOD）
         --dataset facebook --data_root ./data --runs 5
 """
 import sys; sys.path.insert(0, 'src')
+from gnn_uq_bench.model_gat_sage import (canonical_backbone_name, get_pyg_backbone, get_pyg_backbone_bn, get_sparse_backbone, GraphANTNodeBackbone, GPNBackboneModel)
 
 import os, time, argparse, copy
 import numpy as np
@@ -28,6 +29,11 @@ parser.add_argument('--dataset',      type=str,   default='twitch',
                     choices=['facebook', 'twitch'])
 parser.add_argument('--data_root',    type=str,   default='./data')
 parser.add_argument('--runs',         type=int,   default=5)
+parser.add_argument('--model',         type=str,   default='GAT',
+                    choices=['GCN', 'GAT', 'SAGE', 'GraphSAGE'],
+                    help='backbone: GCN, GAT, SAGE/GraphSAGE')
+parser.add_argument('--backbone_heads', type=int,   default=8,
+                    help='GAT attention heads for the new backbone')
 parser.add_argument('--hidden',       type=int,   default=64)
 parser.add_argument('--num_layers',   type=int,   default=2)
 parser.add_argument('--dropout',      type=float, default=0.5)
@@ -39,8 +45,24 @@ parser.add_argument('--n_anchors',    type=int,   default=10)
 parser.add_argument('--anchor_type',  type=str,   default='node',
                     choices=['node', 'graph'])
 parser.add_argument('--base_seed',    type=int,   default=42)
-parser.add_argument('--save_dir',     type=str,   default='./results/gduq_fb_twitch')
+parser.add_argument('--save_dir',     type=str,   default='./results/gduq_fb_twitch_gat_sage')
 args = parser.parse_args()
+
+def _backbone_name():
+    return canonical_backbone_name(args.model)
+
+
+def _model_tag():
+    return _backbone_name().lower()
+
+
+def _tagged_prefix(prefix):
+    return f'{prefix}_{_model_tag()}'
+
+
+def _tagged_title(title):
+    return f'{title} [{_backbone_name()}]'
+
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -48,14 +70,14 @@ print(f'[设备] {device}')
 
 
 def _build_gant(nfeat, nclass, all_train_x_np):
-    """从训练特征估计锚点分布，建立 GraphANTNode"""
+    """Build G-DUQ with GCN/GAT/GraphSAGE graph backbone."""
     mu  = torch.tensor(all_train_x_np.mean(0), dtype=torch.float32)
     std = torch.tensor(all_train_x_np.std(0)  + 1e-6, dtype=torch.float32)
-    base = BaseModelNode(nfeat * 2, args.hidden, nclass,
-                         args.num_layers, args.dropout)
-    return GraphANTNode(base, mu, std,
-                        anchor_type=args.anchor_type,
-                        num_classes=nclass).to(device)
+    base = get_pyg_backbone(args.model, nfeat * 2, args.hidden, nclass,
+                            args.dropout, heads=getattr(args, 'backbone_heads', 8))
+    return GraphANTNodeBackbone(base, mu, std,
+                                anchor_type=args.anchor_type,
+                                num_classes=nclass).to(device)
 
 
 def _train(model, train_data, val_data, seed, save_path):

@@ -24,6 +24,8 @@ RQ3（每个 split）:
     python elliptic_arxiv_cagcn.py --dataset elliptic --data_dir  ./elliptic --runs 5
     python elliptic_arxiv_cagcn.py --dataset arxiv    --data_path ./data.pkl  --runs 5
 """
+import sys; sys.path.insert(0, 'src')
+
 
 import os, pickle, argparse, warnings, csv, math
 import numpy as np
@@ -35,6 +37,7 @@ import torch.optim as optim
 from torch.nn.parameter import Parameter
 from collections import defaultdict
 from sklearn.metrics import roc_auc_score, average_precision_score
+from gnn_uq_bench.model_gat_sage import (canonical_backbone_name, get_pyg_backbone, get_pyg_backbone_bn, get_sparse_backbone, GraphANTNodeBackbone, GPNBackboneModel)
 
 warnings.filterwarnings('ignore')
 
@@ -47,8 +50,9 @@ parser.add_argument('--dataset',       type=str,   default='elliptic',
 parser.add_argument('--data_dir',      type=str,   default='./elliptic')
 parser.add_argument('--data_path',     type=str,   default='./data.pkl')
 parser.add_argument('--runs',          type=int,   default=5)
-parser.add_argument('--model',         type=str,   default='GCN',
-                    choices=['GCN', 'GAT'])
+parser.add_argument('--model',         type=str,   default='GAT',
+                    choices=['GCN', 'GAT', 'SAGE', 'GraphSAGE'],
+                    help='backbone: GCN, GAT, SAGE/GraphSAGE')
 parser.add_argument('--stage',         type=int,   default=2)
 parser.add_argument('--epochs',        type=int,   default=1000)
 parser.add_argument('--epoch_for_st',  type=int,   default=200)
@@ -56,6 +60,8 @@ parser.add_argument('--lr',            type=float, default=0.01)
 parser.add_argument('--lr_for_cal',    type=float, default=0.01)
 parser.add_argument('--weight_decay',  type=float, default=5e-4)
 parser.add_argument('--l2_for_cal',    type=float, default=5e-3)
+parser.add_argument('--backbone_heads', type=int,   default=8,
+                    help='GAT attention heads for the new backbone')
 parser.add_argument('--hidden',        type=int,   default=64)
 parser.add_argument('--dropout',       type=float, default=0.5)
 parser.add_argument('--Lambda',        type=float, default=0.5)
@@ -71,9 +77,25 @@ parser.add_argument('--eerm_dataset', type=str, default='cora',
                     help='EERM 数据集: cora 或 amazon')
 parser.add_argument('--eerm_root',    type=str, default=None,
                     help='EERM 数据集根目录（含 gen/ raw/）')
-parser.add_argument('--save_dir',      type=str,   default='./save_model_cagcn')
+parser.add_argument('--save_dir',      type=str,   default='./save_model_cagcn_gat_sage')
 parser.add_argument('--base_seed',     type=int,   default=42)
 args = parser.parse_args()
+
+def _backbone_name():
+    return canonical_backbone_name(args.model)
+
+
+def _model_tag():
+    return _backbone_name().lower()
+
+
+def _tagged_prefix(prefix):
+    return f'{prefix}_{_model_tag()}'
+
+
+def _tagged_title(title):
+    return f'{title} [{_backbone_name()}]'
+
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -151,10 +173,9 @@ class CaGCN(nn.Module):
 
 
 def get_model(nfeat, nclass):
-    if args.model == 'GCN':
-        return GCN(nfeat, args.hidden, nclass, args.dropout)
-    return SpGAT(nfeat, args.hidden, nclass, args.dropout,
-                 args.alpha, args.nb_heads)
+    return get_sparse_backbone(args.model, nfeat, args.hidden, nclass,
+                               args.dropout, alpha=getattr(args, 'alpha', 0.2),
+                               nheads=getattr(args, 'backbone_heads', getattr(args, 'nb_heads', 8)))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -852,7 +873,7 @@ def summarize(all_runs, split_names, all_keys, csv_path, boxplot_path, title,
 # 9. 主函数
 # ══════════════════════════════════════════════════════════════
 def main():
-    print(f'[配置] dataset={args.dataset} model={args.model} runs={args.runs}')
+    print(f'[配置] dataset={args.dataset} backbone={_backbone_name()} runs={args.runs}')
     print(f'[配置] stage={args.stage} epochs={args.epochs} patience={args.patience}')
     print(f'[配置] id_val_ratio={args.id_val_ratio} id_test_ratio={args.id_test_ratio}')
 
@@ -896,7 +917,7 @@ def main():
             load_final, id_test_mask = run_one_seed(
                 seed, feat_tr, adj_tr, lab_tr, tr_mask_base,
                 feat_ov, adj_ov, lab_ov, ov_mask,
-                nclass=2, crit=crit, prefix='elliptic')
+                nclass=2, crit=crit, prefix=_tagged_prefix('elliptic'))
 
             run_res = {}
 
@@ -928,7 +949,7 @@ def main():
         summarize(all_runs, split_names, all_keys,
                   csv_path=os.path.join(args.save_dir, 'elliptic_cagcn_results.csv'),
                   boxplot_path=os.path.join(args.save_dir, 'elliptic_cagcn_boxplot.csv'),
-                  title='Elliptic — CaGCN',
+                  title=_tagged_title('Elliptic — CaGCN'),
                   reliability_path=os.path.join(args.save_dir, 'elliptic_cagcn_reliability.csv'),
                   uncertainty_path=os.path.join(args.save_dir, 'elliptic_cagcn_uncertainty_samples.csv'))
 
@@ -958,7 +979,7 @@ def main():
             load_final, id_test_mask = run_one_seed(
                 seed, features, adj, labels, base_tr,
                 features, adj, labels, ov_mask,
-                nclass=nclass, crit=crit, prefix='arxiv')
+                nclass=nclass, crit=crit, prefix=_tagged_prefix('arxiv'))
 
             run_res = {}
 
@@ -988,7 +1009,7 @@ def main():
         summarize(all_runs, split_names, all_keys,
                   csv_path=os.path.join(args.save_dir, 'arxiv_cagcn_results.csv'),
                   boxplot_path=os.path.join(args.save_dir, 'arxiv_cagcn_boxplot.csv'),
-                  title='OGB-Arxiv — CaGCN',
+                  title=_tagged_title('OGB-Arxiv — CaGCN'),
                   reliability_path=os.path.join(args.save_dir, 'arxiv_cagcn_reliability.csv'),
                   uncertainty_path=os.path.join(args.save_dir, 'arxiv_cagcn_uncertainty_samples.csv'))
 
@@ -1028,7 +1049,7 @@ def main():
                 seed, feat_tr, feat_val, adj, labels_t,
                 tr_mask, val_mask,
                 nclass=nclass, crit=crit,
-                prefix=f'eerm_{ds_tag}')
+                prefix=_tagged_prefix(f'eerm_{ds_tag}'))
 
             run_res = {}
             model = load_final()
@@ -1057,7 +1078,7 @@ def main():
                       f'{ds_tag}_cagcn_results.csv'),
                   boxplot_path=os.path.join(args.save_dir,
                       f'{ds_tag}_cagcn_boxplot.csv'),
-                  title=f'EERM-{ds_tag} — CaGCN',
+                  title=_tagged_title(f'EERM-{ds_tag} — CaGCN'),
                   reliability_path=os.path.join(args.save_dir,
                       f'{ds_tag}_cagcn_reliability.csv'),
                   uncertainty_path=os.path.join(args.save_dir,

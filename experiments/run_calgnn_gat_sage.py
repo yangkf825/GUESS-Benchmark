@@ -17,6 +17,8 @@ calGNN 特殊性：每种校准方法（Uncal/TS/HB/Iso/BBQ/MetaCal/RBS）
     python calgnn_elliptic_arxiv.py --dataset elliptic --data_dir  ./elliptic --runs 5
     python calgnn_elliptic_arxiv.py --dataset arxiv    --data_path ./data.pkl  --runs 5
 """
+import sys; sys.path.insert(0, 'src')
+
 
 import os, pickle, argparse, warnings, csv, copy, math
 import numpy as np
@@ -34,6 +36,7 @@ from sklearn.isotonic import IsotonicRegression as SklearnIso
 from sklearn.model_selection import train_test_split
 from scipy.stats import entropy as scipy_entropy
 from torch_geometric.nn import GCNConv, GATConv
+from gnn_uq_bench.model_gat_sage import (canonical_backbone_name, get_pyg_backbone, get_pyg_backbone_bn, get_sparse_backbone, GraphANTNodeBackbone, GPNBackboneModel)
 
 warnings.filterwarnings('ignore')
 
@@ -46,8 +49,11 @@ parser.add_argument('--dataset',       type=str,   default='elliptic',
 parser.add_argument('--data_dir',      type=str,   default='./elliptic')
 parser.add_argument('--data_path',     type=str,   default='./data.pkl')
 parser.add_argument('--runs',          type=int,   default=5)
-parser.add_argument('--model',         type=str,   default='GCN',
-                    choices=['GCN', 'GAT'])
+parser.add_argument('--model',         type=str,   default='GAT',
+                    choices=['GCN', 'GAT', 'SAGE', 'GraphSAGE'],
+                    help='backbone: GCN, GAT, SAGE/GraphSAGE')
+parser.add_argument('--backbone_heads', type=int,   default=8,
+                    help='GAT attention heads for the new backbone')
 parser.add_argument('--hidden',        type=int,   default=64)
 parser.add_argument('--dropout',       type=float, default=0.5)
 parser.add_argument('--lr',            type=float, default=0.01)
@@ -66,9 +72,25 @@ parser.add_argument('--eerm_dataset', type=str, default='cora',
                     help='EERM 数据集: cora 或 amazon')
 parser.add_argument('--eerm_root',    type=str, default=None,
                     help='EERM 数据集根目录（含 gen/ raw/）')
-parser.add_argument('--save_dir',      type=str,   default='./save_model_calgnn')
+parser.add_argument('--save_dir',      type=str,   default='./save_model_calgnn_gat_sage')
 parser.add_argument('--base_seed',     type=int,   default=42)
 args = parser.parse_args()
+
+def _backbone_name():
+    return canonical_backbone_name(args.model)
+
+
+def _model_tag():
+    return _backbone_name().lower()
+
+
+def _tagged_prefix(prefix):
+    return f'{prefix}_{_model_tag()}'
+
+
+def _tagged_title(title):
+    return f'{title} [{_backbone_name()}]'
+
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -267,9 +289,8 @@ class GAT(nn.Module):
 
 
 def get_model(nfeat, nclass):
-    if args.model == 'GCN':
-        return GCN(nfeat, args.hidden, nclass, args.dropout)
-    return GAT(nfeat, args.hidden, nclass, args.dropout)
+    return get_pyg_backbone(args.model, nfeat, args.hidden, nclass,
+                            args.dropout, heads=getattr(args, 'backbone_heads', 8))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -1102,7 +1123,7 @@ def summarize(all_runs, split_names, all_keys, csv_path, title,
 # 9. 主函数
 # ══════════════════════════════════════════════════════════════
 def main():
-    print(f'[配置] dataset={args.dataset} model={args.model} runs={args.runs}')
+    print(f'[配置] dataset={args.dataset} backbone={_backbone_name()} runs={args.runs}')
     print(f'[配置] hidden={args.hidden} epochs={args.epochs} patience={args.patience}')
     print(f'[配置] add_cal_loss={args.add_cal_loss} num_bins_rbs={args.num_bins_rbs}')
 
@@ -1156,7 +1177,7 @@ def main():
 
         summarize(all_runs, split_names, all_keys,
                   csv_path=os.path.join(args.save_dir, 'elliptic_calgnn_results.csv'),
-                  title='Elliptic — calGNN',
+                  title=_tagged_title('Elliptic — calGNN'),
                   reliability_path=os.path.join(args.save_dir, 'elliptic_calgnn_reliability.csv'),
                   uncertainty_path=os.path.join(args.save_dir, 'elliptic_calgnn_uncertainty_samples.csv'))
 
@@ -1196,7 +1217,7 @@ def main():
 
         summarize(all_runs, split_names, all_keys,
                   csv_path=os.path.join(args.save_dir, 'arxiv_calgnn_results.csv'),
-                  title='OGB-Arxiv — calGNN',
+                  title=_tagged_title('OGB-Arxiv — calGNN'),
                   reliability_path=os.path.join(args.save_dir, 'arxiv_calgnn_reliability.csv'),
                   uncertainty_path=os.path.join(args.save_dir, 'arxiv_calgnn_uncertainty_samples.csv'))
 
@@ -1255,7 +1276,7 @@ def main():
         summarize(all_runs, split_names, all_keys,
                   csv_path=os.path.join(args.save_dir,
                       f'{ds_tag}_calgnn_results.csv'),
-                  title=f'EERM-{ds_tag} — calGNN',
+                  title=_tagged_title(f'EERM-{ds_tag} — calGNN'),
                   reliability_path=os.path.join(args.save_dir,
                       f'{ds_tag}_calgnn_reliability.csv'),
                   uncertainty_path=os.path.join(args.save_dir,

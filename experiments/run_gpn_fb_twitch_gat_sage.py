@@ -10,6 +10,7 @@ GPN — Facebook100 & Twitch（跨域 OOD）
         --dataset facebook --data_root ./data --runs 3
 """
 import sys; sys.path.insert(0, 'src')
+from gnn_uq_bench.model_gat_sage import (canonical_backbone_name, get_pyg_backbone, get_pyg_backbone_bn, get_sparse_backbone, GraphANTNodeBackbone, GPNBackboneModel)
 
 import os, time, argparse, math
 import numpy as np
@@ -30,6 +31,9 @@ parser.add_argument('--dataset',              type=str,   default='twitch',
                     choices=['facebook', 'twitch'])
 parser.add_argument('--data_root',            type=str,   default='./data')
 parser.add_argument('--runs',                 type=int,   default=3)
+parser.add_argument('--model',         type=str,   default='GAT',
+                    choices=['GCN', 'GAT', 'SAGE', 'GraphSAGE'],
+                    help='backbone: GCN, GAT, SAGE/GraphSAGE')
 parser.add_argument('--dim_hidden',           type=int,   default=64)
 parser.add_argument('--dim_latent',           type=int,   default=16)
 parser.add_argument('--radial_layers',        type=int,   default=6)
@@ -45,8 +49,26 @@ parser.add_argument('--epochs',               type=int,   default=100)
 parser.add_argument('--warmup_epochs',        type=int,   default=20)
 parser.add_argument('--patience',             type=int,   default=20)
 parser.add_argument('--base_seed',            type=int,   default=42)
-parser.add_argument('--save_dir',             type=str,   default='./results/gpn_fb_twitch')
+parser.add_argument('--save_dir',             type=str,   default='./results/gpn_fb_twitch_gat_sage')
+parser.add_argument('--backbone_heads', type=int,   default=8,
+                    help='GAT attention heads for the new backbone')
 args = parser.parse_args()
+
+def _backbone_name():
+    return canonical_backbone_name(args.model)
+
+
+def _model_tag():
+    return _backbone_name().lower()
+
+
+def _tagged_prefix(prefix):
+    return f'{prefix}_{_model_tag()}'
+
+
+def _tagged_title(title):
+    return f'{title} [{_backbone_name()}]'
+
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -55,10 +77,11 @@ print(f'[设备] {device}')
 
 def _train(train_data, val_data, nfeat, nclass, seed, save_path):
     torch.manual_seed(seed)
-    model = GPNModel(
+    model = GPNBackboneModel(
         nfeat, nclass, args.dim_hidden, args.dim_latent,
         args.radial_layers, args.K, args.alpha_teleport,
-        args.dropout, args.alpha_evidence_scale).to(device)
+        args.dropout, args.alpha_evidence_scale,
+        backbone=args.model, heads=getattr(args, 'backbone_heads', 8)).to(device)
     opt = model.get_optimizer(args.lr, 5e-4, args.flow_lr, args.flow_wd)[0]
     best, bad, bs = float('inf'), 0, None
 

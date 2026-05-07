@@ -10,6 +10,7 @@ S-BGCN-T-K — Facebook100 & Twitch（跨域 OOD）
         --dataset facebook --data_root ./data --runs 5
 """
 import sys; sys.path.insert(0, 'src')
+from gnn_uq_bench.model_gat_sage import (canonical_backbone_name, get_pyg_backbone, get_pyg_backbone_bn, get_sparse_backbone, GraphANTNodeBackbone, GPNBackboneModel)
 
 import os, time, argparse, copy
 import numpy as np
@@ -27,6 +28,11 @@ parser.add_argument('--dataset',      type=str,   default='twitch',
                     choices=['facebook', 'twitch'])
 parser.add_argument('--data_root',    type=str,   default='./data')
 parser.add_argument('--runs',         type=int,   default=5)
+parser.add_argument('--model',         type=str,   default='GAT',
+                    choices=['GCN', 'GAT', 'SAGE', 'GraphSAGE'],
+                    help='backbone: GCN, GAT, SAGE/GraphSAGE')
+parser.add_argument('--backbone_heads', type=int,   default=8,
+                    help='GAT attention heads for the new backbone')
 parser.add_argument('--hidden',       type=int,   default=64)
 parser.add_argument('--dropout',      type=float, default=0.5)
 parser.add_argument('--lr',           type=float, default=0.01)
@@ -34,8 +40,24 @@ parser.add_argument('--weight_decay', type=float, default=5e-4)
 parser.add_argument('--epochs',       type=int,   default=200)
 parser.add_argument('--patience',     type=int,   default=50)
 parser.add_argument('--base_seed',    type=int,   default=42)
-parser.add_argument('--save_dir',     type=str,   default='./results/ungnn_fb_twitch')
+parser.add_argument('--save_dir',     type=str,   default='./results/ungnn_fb_twitch_gat_sage')
 args = parser.parse_args()
+
+def _backbone_name():
+    return canonical_backbone_name(args.model)
+
+
+def _model_tag():
+    return _backbone_name().lower()
+
+
+def _tagged_prefix(prefix):
+    return f'{prefix}_{_model_tag()}'
+
+
+def _tagged_title(title):
+    return f'{title} [{_backbone_name()}]'
+
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -64,7 +86,7 @@ def _entropy(probs):
 def _train_on_domains(train_data, val_data, nfeat, nclass, seed, save_path):
     """在所有训练域上联合训练，验证域做 early stopping。"""
     torch.manual_seed(seed)
-    model = GCNModel(nfeat, args.hidden, nclass, args.dropout).to(device)
+    model = get_pyg_backbone_bn(args.model, nfeat, args.hidden, nclass, args.dropout, heads=getattr(args, 'backbone_heads', 8)).to(device)
     opt   = Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     best, bad, bs = 1e9, 0, None
 
@@ -154,7 +176,7 @@ def main():
 
     pref = os.path.join(args.save_dir, f'{args.dataset}_ungnn')
     summarize(all_runs, split_names, all_keys, pref + '_results.csv',
-              f'{args.dataset.capitalize()} — S-BGCN-T-K',
+              _tagged_title(f'{args.dataset.capitalize()} — S-BGCN-T-K'),
               reliability_path=pref + '_reliability.csv',
               uncertainty_path=pref + '_uncertainty.csv')
 

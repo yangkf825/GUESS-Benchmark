@@ -9,6 +9,7 @@ GPN — Graph Posterior Network
     python experiments/run_gpn.py --dataset eerm --eerm_dataset cora --eerm_root ./cora --runs 5
 """
 import sys; sys.path.insert(0, 'src')
+from gnn_uq_bench.model_gat_sage import (canonical_backbone_name, get_pyg_backbone, get_pyg_backbone_bn, get_sparse_backbone, GraphANTNodeBackbone, GPNBackboneModel)
 
 import os, time, argparse
 import numpy as np
@@ -36,6 +37,9 @@ parser.add_argument('--data_path',            type=str,   default='./data.pkl')
 parser.add_argument('--eerm_dataset',         type=str,   default='cora', choices=['cora', 'amazon'])
 parser.add_argument('--eerm_root',            type=str,   default=None)
 parser.add_argument('--runs',                 type=int,   default=5)
+parser.add_argument('--model',         type=str,   default='GAT',
+                    choices=['GCN', 'GAT', 'SAGE', 'GraphSAGE'],
+                    help='backbone: GCN, GAT, SAGE/GraphSAGE')
 parser.add_argument('--dim_hidden',           type=int,   default=64)
 parser.add_argument('--dim_latent',           type=int,   default=10)
 parser.add_argument('--radial_layers',        type=int,   default=10)
@@ -54,8 +58,26 @@ parser.add_argument('--patience',             type=int,   default=50)
 parser.add_argument('--id_val_ratio',         type=float, default=0.1)
 parser.add_argument('--id_test_ratio',        type=float, default=0.1)
 parser.add_argument('--base_seed',            type=int,   default=42)
-parser.add_argument('--save_dir',             type=str,   default='./results/gpn')
+parser.add_argument('--save_dir',             type=str,   default='./results/gpn_gat_sage')
+parser.add_argument('--backbone_heads', type=int,   default=8,
+                    help='GAT attention heads for the new backbone')
 args = parser.parse_args()
+
+def _backbone_name():
+    return canonical_backbone_name(args.model)
+
+
+def _model_tag():
+    return _backbone_name().lower()
+
+
+def _tagged_prefix(prefix):
+    return f'{prefix}_{_model_tag()}'
+
+
+def _tagged_title(title):
+    return f'{title} [{_backbone_name()}]'
+
 
 os.makedirs(args.save_dir, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -74,12 +96,13 @@ def _train_gpn(data, tr_mask_np, val_mask_np, nfeat, nclass, N, save_path, seed)
     tr_t  = torch.tensor(tr_mask_np,  dtype=torch.bool).to(device)
     val_t = torch.tensor(val_mask_np, dtype=torch.bool).to(device)
 
-    model = GPNModel(
+    model = GPNBackboneModel(
         dim_features=nfeat, num_classes=nclass,
         dim_hidden=args.dim_hidden, dim_latent=args.dim_latent,
         radial_layers=args.radial_layers, K=args.K,
         alpha_teleport=args.alpha_teleport, dropout_prob=args.dropout,
-        alpha_evidence_scale=args.alpha_evidence_scale).to(device)
+        alpha_evidence_scale=args.alpha_evidence_scale,
+        backbone=args.model, heads=getattr(args, 'backbone_heads', 8)).to(device)
 
     opt, flow_opt = model.get_optimizer(
         args.lr, args.weight_decay, args.flow_lr, args.flow_weight_decay)
@@ -128,10 +151,11 @@ def _infer_gpn(model_state, feat_new, ei_orig, lab_t, tr_mask_np, nfeat, nclass,
     ei, ew = sym_norm_edge(data.edge_index, N)
     ei = ei.to(device); ew = ew.to(device)
     tr_t = torch.tensor(tr_mask_np, dtype=torch.bool).to(device)
-    model = GPNModel(nfeat, nclass,
+    model = GPNBackboneModel(nfeat, nclass,
                      args.dim_hidden, args.dim_latent, args.radial_layers,
                      args.K, args.alpha_teleport, args.dropout,
-                     args.alpha_evidence_scale).to(device)
+                     args.alpha_evidence_scale,
+                     backbone=args.model, heads=getattr(args, 'backbone_heads', 8)).to(device)
     model.load_state_dict(model_state); model.eval()
     pf = model(data, tr_t, ei, ew)
     return pf['alpha'].cpu().numpy(), pf['soft'].cpu().numpy()
