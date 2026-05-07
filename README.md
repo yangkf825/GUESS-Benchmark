@@ -428,12 +428,6 @@ dist/
 
 ---
 
-## License
-
-Apache 2.0
-
----
-
 ## Appendix: GAT / GraphSAGE Backbone Extension
 
 This section documents the additional GAT and GraphSAGE backbone variants.
@@ -563,10 +557,9 @@ python experiments/run_gpn_fb_twitch_gat_sage.py --dataset facebook --data_root 
 | `--model` | `GCN` | Backbone used by the new `*_gat_sage.py` scripts. Options: `GCN`, `GAT`, `SAGE`, `GraphSAGE`. |
 | `--backbone_heads` | `8` | Number of attention heads used by the GAT backbone where applicable. |
 
-### Design Notes
 
-The new backbone extension is intentionally separated from the original files. This avoids changing the baseline GCN experiments and makes it possible to compare original results against GAT and GraphSAGE variants without modifying the original runners.
+## License
 
-CaGCN keeps its graph-convolution temperature network. The backbone encoder can be GCN, GAT, or GraphSAGE, but the calibration temperature network remains consistent with the CaGCN design.
+Apache 2.0
 
-The GAT and GraphSAGE outputs use separate runner files and save paths, so they do not overwrite the original baseline outputs.
+---
